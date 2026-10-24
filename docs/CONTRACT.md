@@ -7,7 +7,7 @@ account_truth.csv: account_id, role, true_tainted_received, scam_ids
 Taint seeding: for a scam_id, txns with that scam_id whose src is a victim inject tainted money. All later txns (any scam_id) propagate taint per method.
 
 trace(accounts, txns, scam_id) -> DataFrame[account_id, balance, tainted_prop, tainted_fifo, tainted_libr, tainted_min, tainted_max]
-mule_score(account_id, accounts, txns, trace_df) -> dict(S, B, T, H, reasons_for, reasons_against)
+mule_score(account_id, scores_df) -> dict(S, B, T, H, reasons_for, reasons_against)
 harm(account_id, accounts, txns) -> dict(harm_score, rupees_at_risk)
 decide(row, lam) -> dict(action in {none, lien, lien_cap, timed_hold}, lien_amount, note)
 
