@@ -23,14 +23,14 @@ def sim_data():
         txns = pd.read_csv(txn_path)
         account_truth = pd.read_csv(truth_path)
 
+    features_df = build_features(accounts, txns)
     scores_df = score_all(accounts, txns, seed=42)
-    return accounts, txns, account_truth, scores_df
+    return accounts, txns, account_truth, scores_df, features_df
 
 
 def test_features_clean_and_exclusions(sim_data):
     """Features have no NaN or inf; victim and exit accounts are absent."""
-    accounts, txns, _, _ = sim_data
-    features_df = build_features(accounts, txns)
+    accounts, txns, _, _, features_df = sim_data
 
     # No NaN or inf
     assert not features_df.isna().any().any()
@@ -43,7 +43,7 @@ def test_features_clean_and_exclusions(sim_data):
 
 def test_scores_dataframe_structure(sim_data):
     """S within [0,1]; every scored account has all columns."""
-    _, _, _, scores_df = sim_data
+    _, _, _, scores_df, _ = sim_data
     expected_cols = [
         "account_id",
         "S",
@@ -63,7 +63,7 @@ def test_scores_dataframe_structure(sim_data):
 
 def test_auc_performance(sim_data):
     """Out-of-fold ROC AUC for is_mule at least 0.90."""
-    _, _, _, scores_df = sim_data
+    _, _, _, scores_df, _ = sim_data
     auc = roc_auc_score(scores_df["is_mule"], scores_df["S"])
     assert auc >= 0.90, f"OOF AUC {auc:.4f} is below 0.90"
 
@@ -73,7 +73,7 @@ def test_mule_vs_non_mule_separation(sim_data):
     Mean S of mules is greater than mean S of non-mules;
     mean S of accounts with role 'bystander' is lower than mean S of mules.
     """
-    _, _, account_truth, scores_df = sim_data
+    _, _, account_truth, scores_df, _ = sim_data
     merged = scores_df.merge(account_truth[["account_id", "role"]], on="account_id")
 
     mean_s_mules = merged[merged["role"] == "mule"]["S"].mean()
@@ -86,7 +86,7 @@ def test_mule_vs_non_mule_separation(sim_data):
 
 def test_reasons_for_mules(sim_data):
     """Every mule with S above 0.5 has at least one entry in reasons_for."""
-    _, _, account_truth, scores_df = sim_data
+    _, _, account_truth, scores_df, _ = sim_data
     merged = scores_df.merge(account_truth[["account_id", "role"]], on="account_id")
 
     high_s_mules = merged[(merged["role"] == "mule") & (merged["S"] > 0.5)]
@@ -98,7 +98,7 @@ def test_reasons_for_mules(sim_data):
 
 def test_mule_score_function(sim_data):
     """mule_score returns the same S as scores_df for a sample account and raises KeyError for absent."""
-    _, _, _, scores_df = sim_data
+    _, _, _, scores_df, _ = sim_data
     sample_aid = scores_df.iloc[0]["account_id"]
     res = mule_score(sample_aid, scores_df)
 
@@ -111,3 +111,15 @@ def test_mule_score_function(sim_data):
 
     with pytest.raises(KeyError):
         mule_score("NON_EXISTENT_ACC", scores_df)
+
+
+def test_scam_inflow_share_by_role(sim_data):
+    """Mean scam_inflow_share for role 'normal' is below 0.05, and above 0.5 for mules."""
+    _, _, account_truth, _, features_df = sim_data
+    merged = features_df.merge(account_truth[["account_id", "role"]], on="account_id")
+
+    mean_normal_scam_inflow = merged[merged["role"] == "normal"]["scam_inflow_share"].mean()
+    mean_mule_scam_inflow = merged[merged["role"] == "mule"]["scam_inflow_share"].mean()
+
+    assert mean_normal_scam_inflow < 0.05, f"Normal scam_inflow_share too high: {mean_normal_scam_inflow:.4f}"
+    assert mean_mule_scam_inflow > 0.50, f"Mule scam_inflow_share too low: {mean_mule_scam_inflow:.4f}"
