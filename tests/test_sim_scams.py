@@ -7,8 +7,8 @@ from sim.scams import add_scams
 def test_reproducibility():
     """Same seed gives identical output."""
     accs, txns = generate_normal(seed=42)
-    accs1, txns1, truth1 = add_scams(accs, txns, n_scams=10, seed=42)
-    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=10, seed=42)
+    accs1, txns1, truth1 = add_scams(accs, txns, n_scams=14, seed=42)
+    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=14, seed=42)
 
     pd.testing.assert_frame_equal(accs1, accs2)
     pd.testing.assert_frame_equal(txns1, txns2)
@@ -18,7 +18,7 @@ def test_reproducibility():
 def test_shapes_and_exits():
     """All four shapes present and exactly 3 exit accounts."""
     accs, txns = generate_normal(seed=42)
-    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=10, seed=42)
+    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=14, seed=42)
 
     expected_shapes = {"layered_chain", "fan_out", "fan_in", "fan_out_gather"}
     assert set(truth2["shape"].unique()) == expected_shapes
@@ -30,11 +30,12 @@ def test_shapes_and_exits():
 
 
 def test_is_mule_labeling():
-    """Mules have is_mule 1 and everyone else 0."""
+    """Mules have is_mule 1 and everyone else 0; exactly 16 mules."""
     accs, txns = generate_normal(seed=42)
-    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=10, seed=42)
+    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=14, seed=42)
 
     mules = accs2[accs2["is_mule"] == 1]
+    assert len(mules) == 16
     assert (mules["type"] == "mule").all()
 
     non_mules = accs2[accs2["is_mule"] == 0]
@@ -42,13 +43,13 @@ def test_is_mule_labeling():
 
 
 def test_mule_properties():
-    """At least 2 mules appear in 2 or more scams, and at least 2 mules have age_days > 700."""
+    """At least 2 mules appear in 2 or more scams, and at least 4 mules have age_days > 700."""
     accs, txns = generate_normal(seed=42)
-    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=10, seed=42)
+    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=14, seed=42)
 
     mules = accs2[accs2["type"] == "mule"]
     hard_mules = mules[mules["age_days"] > 700]
-    assert len(hard_mules) >= 2
+    assert len(hard_mules) >= 4
 
     # Mule participation in scams
     all_mule_lists = [m.split(",") for m in truth2["mule_ids"]]
@@ -61,9 +62,9 @@ def test_mule_properties():
 def test_scam_accounting():
     """Every scam_id in truth_df; exit_total + remaining_in_mules <= total_stolen."""
     accs, txns = generate_normal(seed=42)
-    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=10, seed=42)
+    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=14, seed=42)
 
-    assert len(truth2) == 10
+    assert len(truth2) == 14
     scam_ids_in_txns = set(txns2[txns2["scam_id"] != ""]["scam_id"])
     assert scam_ids_in_txns == set(truth2["scam_id"])
 
@@ -79,7 +80,7 @@ def test_scam_accounting():
 def test_no_negative_balance_replay():
     """No negative balance after merge when replayed in chronological order."""
     accs, txns = generate_normal(seed=42)
-    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=10, seed=42)
+    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=14, seed=42)
 
     balances = dict(zip(accs2["account_id"], accs2["opening_balance"].astype(float)))
 

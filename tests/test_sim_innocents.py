@@ -83,23 +83,20 @@ def test_bystander_properties():
 
 
 def test_lookalike_and_aggregator_roles():
-    """Exactly 3 look-alike roles present; one aggregator_tainted."""
+    """Exactly 4 look-alike roles present; one aggregator_tainted."""
     accs, txns, scam_truth, account_truth = build_all(seed=42)
 
     roles = account_truth["role"].value_counts()
     assert "lookalike_busy" in roles
     assert "lookalike_festival" in roles
     assert "lookalike_new" in roles
+    assert "lookalike_payout" in roles
 
-    lookalike_count = (
-        roles.get("lookalike_busy", 0)
-        + roles.get("lookalike_festival", 0)
-        + roles.get("lookalike_new", 0)
-    )
-    # Exactly 3 look-alike accounts present (1 per role)
+    # Exactly 4 look-alike accounts present (1 per role)
     assert roles.get("lookalike_busy") == 1
     assert roles.get("lookalike_festival") == 1
     assert roles.get("lookalike_new") == 1
+    assert roles.get("lookalike_payout") == 1
 
     # Exactly one aggregator_tainted
     assert roles.get("aggregator_tainted") == 1

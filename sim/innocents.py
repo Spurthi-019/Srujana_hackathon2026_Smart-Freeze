@@ -12,8 +12,13 @@ def add_innocents(
     Adds innocent edge cases:
     - Bystanders: normal accounts receiving small payments from leftover mule funds.
     - Aggregator tainted: one aggregator receiving tainted payments from 2 different scams.
-    - Look-alikes: busy merchant, festival surge, new account.
-    - Account truth: labels all roles and records true tainted received and scam_ids.
+    - Look-alikes (4 roles):
+      1. lookalike_busy: age_days 150-400, opening_balance <= 1000, avg_monthly_inflow ~30% of real volume,
+         forwards 85-95% within 20-40 mins, active on >= 20 days.
+      2. lookalike_festival: 10x inflow during days 19-21, forwards ~70% within an hour during days 19-21.
+      3. lookalike_new: age_days 20 with regular activity.
+      4. lookalike_payout: receives large batch twice a month and forwards to ~20 gig accounts within 30-60 mins.
+    - Account truth: labels all roles, records true tainted received and scam_ids.
     """
     rng = np.random.default_rng(seed)
 
@@ -24,7 +29,6 @@ def add_innocents(
     # Initialize to_bystanders column in scam_truth2
     scam_truth2["to_bystanders"] = 0.0
 
-    # Calculate initial balances and replay up to exits
     contract_cols = ["account_id", "type", "age_days", "avg_monthly_inflow", "opening_balance", "is_mule"]
 
     # We will identify candidate normal accounts for bystanders:
@@ -34,54 +38,40 @@ def add_innocents(
         accounts2["type"].isin(["salaried", "merchant", "gig"]) & (accounts2["opening_balance"] >= 3000)
     ]["account_id"].tolist()
 
-    # Pre-compute outgoing transactions per account: list of (time, amt)
     outgoing_by_acc = {aid: [] for aid in accounts2["account_id"]}
     for _, row in txns2.iterrows():
         outgoing_by_acc[row["src"]].append(int(row["time"]))
 
-    # We also track live mule balances at the end of each scam
-    # Let's map each scam to its exit transactions to know exit times and last mules
-    new_txns = []
-
-    # Map scam_id to last mules and their leftovers
-    # In scams.py:
-    # Exit transactions have dst in EXIT_ATM_1, EXIT_JEWELLER_1, EXIT_EXCH_1
     exit_acc_set = {"EXIT_ATM_1", "EXIT_JEWELLER_1", "EXIT_EXCH_1"}
     scam_exit_txns = txns2[txns2["dst"].isin(exit_acc_set) & (txns2["scam_id"] != "")]
 
-    # Calculate current balance per account across all existing txns
     live_balances = dict(zip(accounts2["account_id"], accounts2["opening_balance"].astype(float)))
     for _, row in txns2.sort_values(by=["time"]).iterrows():
         live_balances[row["src"]] -= float(row["amount"])
         live_balances[row["dst"]] += float(row["amount"])
 
+    new_txns = []
+
     # a) Bystanders (about 8 across different scams)
     # For a scam whose start_time is before day 25 (< 25 * 1440 = 36000)
     eligible_scams = scam_truth2[scam_truth2["start_time"] < 25 * 1440].copy()
 
-    bystander_records = {}  # acc_id -> {"tainted": float, "scams": list}
+    bystander_records = {}
     used_bystanders = set()
 
     for _, s_row in eligible_scams.iterrows():
         sid = s_row["scam_id"]
-        # Find exit transactions for this scam
         s_exits = scam_exit_txns[scam_exit_txns["scam_id"] == sid]
         if s_exits.empty:
             continue
 
-        # Get the sending mule of the exit
         mule_src = s_exits.iloc[-1]["src"]
         exit_time = int(s_exits.iloc[-1]["time"])
 
-        # Check mule's current balance
         mule_bal = live_balances.get(mule_src, 0.0)
-        # Leftover money in this mule
-        if mule_bal < 6667.0:  # to allow at least 2000 with at most 30%
-            # If mule_bal is lower, we can still take min(2000, 30%) if bal >= 2000
-            if mule_bal < 2000.0:
-                continue
+        if mule_bal < 2000.0:
+            continue
 
-        # Send 2,000 - 25,000 rupees (at most 30% of that mule's leftover)
         max_possible = min(25000.0, mule_bal * 0.30)
         if max_possible < 2000.0:
             continue
@@ -91,12 +81,7 @@ def add_innocents(
         if receipt_time > 43200:
             continue
 
-        # Find a normal account with:
-        # - opening_balance >= 3000
-        # - opening_balance > amt (test requirement: opening_balance above true_tainted_received)
-        # - at least 3 outgoing transactions in [receipt_time, receipt_time + 7200]
         chosen_bystander = None
-        # Shuffle candidates to pick evenly
         shuffled_cands = rng.permutation(normal_candidates)
         for cand in shuffled_cands:
             if cand in used_bystanders:
@@ -104,7 +89,6 @@ def add_innocents(
             cand_op_bal = accounts2.loc[accounts2["account_id"] == cand, "opening_balance"].values[0]
             if cand_op_bal <= amt:
                 continue
-            # Check outgoing txns in [receipt_time, receipt_time + 7200]
             out_times = outgoing_by_acc.get(cand, [])
             in_window = [t for t in out_times if receipt_time <= t <= receipt_time + 7200]
             if len(in_window) >= 3:
@@ -123,7 +107,6 @@ def add_innocents(
             live_balances[mule_src] -= amt
             live_balances[chosen_bystander] += amt
 
-            # Update scam_truth2: reduce remaining_in_mules, increase to_bystanders
             idx = scam_truth2.index[scam_truth2["scam_id"] == sid].tolist()[0]
             scam_truth2.at[idx, "remaining_in_mules"] = round(scam_truth2.at[idx, "remaining_in_mules"] - amt, 2)
             scam_truth2.at[idx, "to_bystanders"] = round(scam_truth2.at[idx, "to_bystanders"] + amt, 2)
@@ -133,13 +116,9 @@ def add_innocents(
             bystander_records[chosen_bystander]["tainted"] += amt
             bystander_records[chosen_bystander]["scams"].append(sid)
 
-    # b) HARD CASE: one aggregator also receives a tainted payment this way from a mule in two different scams.
-    # Pick 1 aggregator
+    # b) HARD CASE: one aggregator receives tainted payment from 2 different scams
     aggregator_ids = accounts2[accounts2["type"] == "aggregator"]["account_id"].tolist()
     chosen_aggregator = aggregator_ids[0]
-    agg_tainted_records = {"tainted": 0.0, "scams": []}
-
-    # Find 2 distinct scams with leftover money in a mule
     agg_scams_added = 0
     for _, s_row in scam_truth2.iterrows():
         if agg_scams_added >= 2:
@@ -168,31 +147,40 @@ def add_innocents(
                 idx = scam_truth2.index[scam_truth2["scam_id"] == sid].tolist()[0]
                 scam_truth2.at[idx, "remaining_in_mules"] = round(scam_truth2.at[idx, "remaining_in_mules"] - amt, 2)
                 scam_truth2.at[idx, "to_bystanders"] = round(scam_truth2.at[idx, "to_bystanders"] + amt, 2)
-                agg_tainted_records["tainted"] += amt
-                agg_tainted_records["scams"].append(sid)
                 agg_scams_added += 1
 
-    # c) LOOK-ALIKES (all innocent, is_mule 0, no scam_id):
-    # - lookalike_busy: one merchant gets about 150 small inflows from many different senders across the 30 days,
-    #   and forwards about 85% of each batch to suppliers within 30 minutes.
-    # - lookalike_festival: one merchant or gig account gets about 10x its normal inflow during days 19-21.
-    # - lookalike_new: one account with age_days 20 and regular activity.
-
-    # 1. lookalike_busy
+    # c) LOOK-ALIKES (4 roles):
+    # 1. lookalike_busy:
+    # age_days 150-400, opening_balance <= 1000, avg_monthly_inflow ~30% of real monthly volume,
+    # forwards 85-95% of each batch to suppliers within 20-40 minutes, active on >= 20 days.
     regular_merchants = accounts2[(accounts2["type"] == "merchant") & (~accounts2["account_id"].isin(used_bystanders))]["account_id"].tolist()
     busy_merchant = regular_merchants[0]
-    # Senders: salaried and gig
+    # Update busy_merchant attributes in accounts2
+    idx_busy = accounts2.index[accounts2["account_id"] == busy_merchant].tolist()[0]
+    accounts2.at[idx_busy, "age_days"] = int(rng.integers(150, 401))
+    accounts2.at[idx_busy, "opening_balance"] = float(rng.uniform(200, 1000))
+    # We will adjust avg_monthly_inflow below based on real volume
+
     customer_pool = accounts2[accounts2["type"].isin(["salaried", "gig"])]["account_id"].tolist()
     supplier_pool = [m for m in regular_merchants if m != busy_merchant]
 
-    inflow_times = np.sort(rng.integers(100, 43000, size=150))
+    # Generate ~150 small inflows across at least 20 distinct days
+    busy_days = rng.choice(np.arange(0, 30), size=24, replace=False)
+    inflow_times = []
+    for d in busy_days:
+        n_in_day = int(rng.integers(5, 8))
+        d_times = d * 1440 + rng.integers(60, 1380, size=n_in_day)
+        inflow_times.extend(d_times)
+    inflow_times = np.sort(np.array(inflow_times))
+
+    busy_total_inflow = 0.0
     for t_in in inflow_times:
-        amt_in = round(float(rng.uniform(200.0, 1500.0)), 2)
+        amt_in = round(float(rng.uniform(300.0, 1800.0)), 2)
         sender = rng.choice(customer_pool)
-        # Senders must have enough balance
         if live_balances[sender] >= amt_in:
             live_balances[sender] -= amt_in
             live_balances[busy_merchant] += amt_in
+            busy_total_inflow += amt_in
             new_txns.append({
                 "time": int(t_in),
                 "src": sender,
@@ -200,9 +188,10 @@ def add_innocents(
                 "amount": amt_in,
                 "scam_id": "",
             })
-            # Forward ~85% within 30 minutes
-            fwd_amt = round(amt_in * float(rng.uniform(0.83, 0.87)), 2)
-            t_fwd = min(43200, int(t_in + rng.integers(5, 30)))
+            # Forward 85-95% within 20-40 minutes
+            fwd_pct = float(rng.uniform(0.85, 0.95))
+            fwd_amt = round(amt_in * fwd_pct, 2)
+            t_fwd = min(43200, int(t_in + rng.integers(20, 41)))
             supplier = rng.choice(supplier_pool)
             if live_balances[busy_merchant] >= fwd_amt:
                 live_balances[busy_merchant] -= fwd_amt
@@ -215,10 +204,12 @@ def add_innocents(
                     "scam_id": "",
                 })
 
-    # 2. lookalike_festival: one merchant or gig account gets ~10x normal inflow during days 19-21
-    # Day 19 to 21 = minutes 19*1440 to 22*1440 (27360 to 31680)
+    accounts2.at[idx_busy, "avg_monthly_inflow"] = round(busy_total_inflow * 0.30, 2)
+
+    # 2. lookalike_festival:
+    # 10x inflow during days 19-21, also forwards ~70% within an hour during days 19-21
     fest_cand = [m for m in regular_merchants[1:] if m not in used_bystanders][0]
-    fest_times = rng.integers(27360, 31680, size=80)
+    fest_times = np.sort(rng.integers(27360, 31680, size=80))
     for t_f in fest_times:
         amt_f = round(float(rng.uniform(1000.0, 5000.0)), 2)
         sender = rng.choice(customer_pool)
@@ -232,9 +223,22 @@ def add_innocents(
                 "amount": amt_f,
                 "scam_id": "",
             })
+            # Forwards ~70% within an hour
+            fwd_fest = round(amt_f * float(rng.uniform(0.68, 0.72)), 2)
+            t_fwd_f = min(43200, int(t_f + rng.integers(10, 55)))
+            supplier = rng.choice(supplier_pool)
+            if live_balances[fest_cand] >= fwd_fest:
+                live_balances[fest_cand] -= fwd_fest
+                live_balances[supplier] += fwd_fest
+                new_txns.append({
+                    "time": t_fwd_f,
+                    "src": fest_cand,
+                    "dst": supplier,
+                    "amount": fwd_fest,
+                    "scam_id": "",
+                })
 
-    # 3. lookalike_new: one account with age_days 20 and regular activity
-    # Add new account to accounts2
+    # 3. lookalike_new: age_days 20 with regular activity
     new_acc_id = "ACC_NEW_001"
     new_acc_row = {
         "account_id": new_acc_id,
@@ -247,8 +251,6 @@ def add_innocents(
     accounts2 = pd.concat([accounts2, pd.DataFrame([new_acc_row])], ignore_index=True)
     live_balances[new_acc_id] = new_acc_row["opening_balance"]
 
-    # Regular activity across days 20 to 30 (e.g. from day 10 onward or all 30 days)
-    # gets small salary/transfer and spends at merchants
     new_tx_times = np.sort(rng.integers(500, 43000, size=20))
     for t_n in new_tx_times:
         amt_spend = round(float(rng.uniform(200.0, 1200.0)), 2)
@@ -264,8 +266,63 @@ def add_innocents(
                 "scam_id": "",
             })
 
-    # d) Never allow a negative balance anywhere in the final timeline (replay check).
-    # Merge existing txns2 with new_txns, sort by time, replay and shrink/skip if necessary
+    # 4. NEW lookalike_payout (type gig or aggregator):
+    # receives a large batch from an employer-like account twice in the month and forwards it
+    # to about 20 different gig accounts within 30-60 minutes, is_mule 0, no scam_id, age_days 200-600
+    payout_acc_id = "ACC_PAYOUT_001"
+    payout_acc_row = {
+        "account_id": payout_acc_id,
+        "type": "aggregator",
+        "age_days": int(rng.integers(200, 601)),
+        "avg_monthly_inflow": 500000.0,
+        "opening_balance": 20000.0,
+        "is_mule": 0,
+    }
+    accounts2 = pd.concat([accounts2, pd.DataFrame([payout_acc_row])], ignore_index=True)
+    live_balances[payout_acc_id] = payout_acc_row["opening_balance"]
+
+    employer_ids = accounts2[(accounts2["type"] == "merchant") & (accounts2["opening_balance"] > 1000000)]["account_id"].tolist()
+    if not employer_ids:
+        employer_ids = accounts2[accounts2["type"] == "merchant"]["account_id"].tolist()[:3]
+    gig_accounts = accounts2[accounts2["type"] == "gig"]["account_id"].tolist()
+
+    # Twice in the month: e.g. day 5 (minute 7200) and day 20 (minute 28800)
+    for batch_t in [7200, 28800]:
+        emp = rng.choice(employer_ids)
+        batch_amt = round(float(rng.uniform(150000, 250000)), 2)
+        if live_balances[emp] >= batch_amt:
+            live_balances[emp] -= batch_amt
+            live_balances[payout_acc_id] += batch_amt
+            new_txns.append({
+                "time": batch_t,
+                "src": emp,
+                "dst": payout_acc_id,
+                "amount": batch_amt,
+                "scam_id": "",
+            })
+
+            # Forwards to about 20 different gig accounts within 30-60 minutes
+            n_targets = min(20, len(gig_accounts))
+            target_gigs = rng.choice(gig_accounts, size=n_targets, replace=False)
+            weights = rng.dirichlet(np.ones(n_targets))
+            payout_amts = [round(batch_amt * 0.98 * w, 2) for w in weights]
+            payout_amts[0] += round(batch_amt * 0.98 - sum(payout_amts), 2)
+
+            for g_target, g_amt in zip(target_gigs, payout_amts):
+                delay = int(rng.integers(30, 61))
+                t_out = min(43200, batch_t + delay)
+                if live_balances[payout_acc_id] >= g_amt:
+                    live_balances[payout_acc_id] -= g_amt
+                    live_balances[g_target] += g_amt
+                    new_txns.append({
+                        "time": t_out,
+                        "src": payout_acc_id,
+                        "dst": g_target,
+                        "amount": g_amt,
+                        "scam_id": "",
+                    })
+
+    # d) Replay check to ensure no negative balances anywhere
     all_combined = pd.concat([txns2, pd.DataFrame(new_txns)], ignore_index=True)
     all_combined = all_combined.sort_values(by=["time"]).reset_index(drop=True)
 
@@ -309,20 +366,12 @@ def add_innocents(
 
     txns2 = pd.DataFrame(final_txns)
 
-    # Build account_truth:
-    # columns: account_id, role (normal|mule|bystander|lookalike_busy|lookalike_festival|lookalike_new|aggregator_tainted|victim|exit),
-    #          true_tainted_received (rupees of scam money received directly from a mule, 0 otherwise),
-    #          scam_ids (comma-separated)
-    # Determine roles:
-    # First, map accounts from accounts2
-    truth_records = []
-    # Identify which transactions were actually kept for bystanders / aggregator
+    # Build account_truth
     actual_bystander_tainted = {b: 0.0 for b in bystander_records}
     actual_bystander_scams = {b: set() for b in bystander_records}
     actual_agg_tainted = 0.0
     actual_agg_scams = set()
 
-    # Mules set
     mule_accs = set(accounts2[accounts2["is_mule"] == 1]["account_id"])
 
     for _, row in txns2.iterrows():
@@ -335,7 +384,6 @@ def add_innocents(
                 actual_agg_tainted += float(row["amount"])
                 actual_agg_scams.add(row["scam_id"])
 
-    # Map scam_ids for victims and mules
     scam_victim_map = {}
     scam_mule_map = {}
     for _, s_row in scam_truth2.iterrows():
@@ -347,6 +395,7 @@ def add_innocents(
         for m in m_list:
             scam_mule_map.setdefault(m, []).append(sid)
 
+    truth_records = []
     for _, acc_row in accounts2.iterrows():
         aid = acc_row["account_id"]
         atype = acc_row["type"]
@@ -371,13 +420,16 @@ def add_innocents(
             role = "lookalike_new"
             tainted = 0.0
             scams_str = ""
+        elif aid == payout_acc_id:
+            role = "lookalike_payout"
+            tainted = 0.0
+            scams_str = ""
         elif atype == "victim":
             role = "victim"
             tainted = 0.0
             scams_str = ",".join(sorted(scam_victim_map.get(aid, [])))
         elif atype == "mule":
             role = "mule"
-            # Mule receives stolen money from victim or other mules, but true_tainted_received for innocents is tracked
             tainted = 0.0
             scams_str = ",".join(sorted(scam_mule_map.get(aid, [])))
         elif atype == "exit":
@@ -397,8 +449,6 @@ def add_innocents(
         })
 
     account_truth = pd.DataFrame(truth_records)
-
-    # Ensure accounts2 matches exact contract columns
     accounts2 = accounts2[contract_cols].copy()
 
     return accounts2, txns2, scam_truth2, account_truth
