@@ -18,7 +18,7 @@ def build_all(seed: int = 42) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame,
     accounts, txns = generate_normal(seed=seed)
 
     # 2. Add scams
-    accounts, txns, scam_truth = add_scams(accounts, txns, n_scams=10, seed=seed)
+    accounts, txns, scam_truth = add_scams(accounts, txns, seed=seed)
 
     # 3. Add innocents and look-alikes
     accounts, txns, scam_truth, account_truth = add_innocents(accounts, txns, scam_truth, seed=seed)
