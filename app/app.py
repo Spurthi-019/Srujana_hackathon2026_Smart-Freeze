@@ -4,6 +4,7 @@ Smart Freeze: Streamlit Application (Prototype for banks).
 SIMULATED DATA ONLY - prototype, human approves every action.
 """
 
+from datetime import datetime
 import json
 from pathlib import Path
 import sys
@@ -21,6 +22,20 @@ import streamlit as st
 
 from engine.actions import decide, decide_all
 from engine.harm import innocent_blocked
+
+# assumption, tunable, demo only
+EVIDENCE_LOGIT_STEP = 1.5
+
+EVIDENCE_OPTIONS = [
+    "Invoice or receipt for the payment",
+    "Known regular customer or payer",
+    "Regular business or salary inflows",
+    "Verified identity and long account history",
+]
+
+# Session state initialization for audit log
+if "audit_log" not in st.session_state:
+    st.session_state["audit_log"] = []
 
 st.set_page_config(
     page_title="Smart Freeze",
@@ -92,6 +107,99 @@ as_of = min(t0 + selected_delay, 43200.0)
 # Helper Functions for Panels
 # ==============================================================================
 
+def action_badge_html(action: str) -> str:
+    """Returns HTML for a colored action badge."""
+    badge_colors = {
+        "none": "#6c757d",      # grey
+        "lien": "#0d6efd",      # blue
+        "lien_cap": "#fd7e14",  # orange
+        "timed_hold": "#dc3545", # red
+    }
+    bg_color = badge_colors.get(action, "#6c757d")
+    return (
+        f'<span style="background-color: {bg_color}; color: white; padding: 4px 12px; '
+        f'border-radius: 12px; font-weight: bold; font-size: 0.9em; text-transform: uppercase;">'
+        f'{action}</span>'
+    )
+
+
+def compute_held_amount(balance: float, action: str, lien_amount: float, cap_share: float) -> float:
+    """Compute held rupees for a given freeze/lien action."""
+    if action == "timed_hold":
+        return float(balance)
+    elif action == "lien":
+        return float(min(balance, lien_amount))
+    elif action == "lien_cap":
+        base_held = min(balance, lien_amount)
+        return float(base_held + cap_share * max(0.0, balance - base_held))
+    return 0.0
+
+
+def render_hold_clock(explanation_day: float | None = None) -> go.Figure:
+    """Renders a simple plotly horizontal timeline for the draft RBI hold clock."""
+    events = [
+        {"day": 0, "label": "Day 0: Hold placed", "color": "#0d6efd"},
+        {"day": 20, "label": "Day 20: Explanation deadline", "color": "#fd7e14"},
+    ]
+    if explanation_day is not None:
+        dec_due = int(explanation_day + 10)
+        events.append({"day": int(explanation_day), "label": f"Day {int(explanation_day)}: Explanation received", "color": "#20c997"})
+        events.append({"day": dec_due, "label": f"Day {dec_due}: Decision due", "color": "#6f42c1"})
+    else:
+        dec_due = 30
+        events.append({"day": 30, "label": "Day 30: Decision due", "color": "#6f42c1"})
+
+    events.append({"day": 60, "label": "Day 60: Max hold", "color": "#dc3545"})
+    events.sort(key=lambda x: (x["day"], x["label"]))
+
+    fig = go.Figure()
+    # Baseline track
+    fig.add_trace(go.Scatter(
+        x=[0, 60],
+        y=[0, 0],
+        mode="lines",
+        line=dict(color="#dee2e6", width=6),
+        hoverinfo="none",
+        showlegend=False,
+    ))
+
+    days = [e["day"] for e in events]
+    labels = [e["label"] for e in events]
+    colors = [e["color"] for e in events]
+
+    fig.add_trace(go.Scatter(
+        x=days,
+        y=[0] * len(days),
+        mode="markers+text",
+        text=[f"<b>{lbl}</b>" for lbl in labels],
+        textposition="top center",
+        marker=dict(size=14, color=colors, line=dict(width=2, color="#ffffff")),
+        hoverinfo="text",
+        hovertext=labels,
+        showlegend=False,
+    ))
+
+    fig.update_layout(
+        xaxis=dict(
+            title="Simulated Days",
+            range=[-5, 65],
+            tickvals=[0, 10, 20, 30, 40, 50, 60],
+            zeroline=False,
+            showgrid=True,
+        ),
+        yaxis=dict(
+            showgrid=False,
+            zeroline=False,
+            showticklabels=False,
+            range=[-0.5, 1.2],
+        ),
+        height=180,
+        margin=dict(l=20, r=20, t=30, b=20),
+        template="plotly_white",
+    )
+    return fig
+
+
 def render_account_header(
     aid: str,
     acc_type: str,
@@ -101,18 +209,7 @@ def render_account_header(
     note: str,
 ) -> None:
     """Renders Header: id, type, balance, recommended action badge, needs_human flag, and decide note."""
-    badge_colors = {
-        "none": "#6c757d",      # grey
-        "lien": "#0d6efd",      # blue
-        "lien_cap": "#fd7e14",  # orange
-        "timed_hold": "#dc3545" # red
-    }
-    bg_color = badge_colors.get(action, "#6c757d")
-    badge_html = (
-        f'<span style="background-color: {bg_color}; color: white; padding: 4px 12px; '
-        f'border-radius: 12px; font-weight: bold; font-size: 0.9em; text-transform: uppercase;">'
-        f'{action}</span>'
-    )
+    badge_html = action_badge_html(action)
 
     human_html = ""
     if needs_human:
@@ -827,9 +924,146 @@ with tab_case:
             cap_share=acc_data["cap_share"],
         )
 
-        # f) Plain-text decision record download
+        # Holder explanation panel (only when recommended action is not "none")
+        exp_day_input = None
+        dec_due = 30
+        if acc_data["action"] != "none":
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("#### Holder Explanation")
+
+            selected_evidence = st.multiselect(
+                "Evidence provided",
+                options=EVIDENCE_OPTIONS,
+                key=f"ev_{aid}_{selected_scam}_{selected_delay}",
+            )
+
+            # S_new calculation
+            s_orig = float(acc_data["S"])
+            s_clip = float(np.clip(s_orig, 1e-6, 1.0 - 1e-6))
+            logit_s = float(np.log(s_clip / (1.0 - s_clip)))
+            num_ev = len(selected_evidence)
+            logit_s_new = logit_s - EVIDENCE_LOGIT_STEP * num_ev
+            s_new = float(1.0 / (1.0 + np.exp(-logit_s_new)))
+            s_new = float(np.clip(s_new, 1e-6, 1.0 - 1e-6))
+
+            # Decide with S_new (same lam, harm_score, recent_inflow)
+            h_score = float(harm_row["harm_score"]) if ("harm_score" in harm_row and pd.notna(harm_row["harm_score"])) else 0.5
+            w_start = as_of - 120
+            r_txns = txns_df[(txns_df["dst"] == aid) & (txns_df["time"] > w_start) & (txns_df["time"] <= as_of)]
+            r_inflow = float(r_txns["amount"].sum()) if len(r_txns) > 0 else 0.0
+
+            row_new = {
+                "account_id": aid,
+                "balance": acc_data["balance"],
+                "tainted_min": acc_data["tainted_min"],
+                "tainted_max": acc_data["tainted_max"],
+                "S": s_new,
+                "harm_score": h_score,
+                "recent_inflow": r_inflow,
+            }
+            new_dec = decide(row_new, lam=lam)
+            new_action = new_dec["action"]
+            new_lien_amt = float(new_dec.get("lien_amount", 0.0))
+            new_cap_share = float(new_dec.get("cap_share", 0.0))
+            new_held = compute_held_amount(
+                balance=acc_data["balance"],
+                action=new_action,
+                lien_amount=new_lien_amt,
+                cap_share=new_cap_share,
+            )
+
+            # Show before and after in two columns
+            col_b, col_a = st.columns(2)
+            with col_b:
+                st.markdown("##### Before Evidence")
+                st.markdown(f"- **Priority Score S:** `{acc_data['S']:.4f}`")
+                st.markdown(f"- **Action:** {action_badge_html(acc_data['action'])}", unsafe_allow_html=True)
+                st.markdown(f"- **Amount Held:** ₹{smart_held:,.2f}")
+            with col_a:
+                st.markdown("##### After Evidence")
+                st.markdown(f"- **Priority Score S:** `{s_new:.4f}`")
+                st.markdown(f"- **Action:** {action_badge_html(new_action)}", unsafe_allow_html=True)
+                st.markdown(f"- **Amount Held:** ₹{new_held:,.2f}")
+
+            st.caption("Demo of the workflow. Evidence moves the priority score by an assumed fixed amount; a human approves every release.")
+
+            # Approve release button if less restrictive
+            action_rank = {"none": 0, "lien": 1, "lien_cap": 2, "timed_hold": 3}
+            old_rank = action_rank.get(acc_data["action"], 0)
+            new_rank = action_rank.get(new_action, 0)
+            if new_rank < old_rank:
+                if st.button("Approve release", key=f"approve_{aid}_{selected_scam}_{selected_delay}"):
+                    entry = {
+                        "account_id": aid,
+                        "scam_id": selected_scam,
+                        "delay": selected_delay,
+                        "evidence": list(selected_evidence),
+                        "old_action": acc_data["action"],
+                        "new_action": new_action,
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                    st.session_state["audit_log"].append(entry)
+                    st.success(f"Release approved: {acc_data['action']} → {new_action}")
+
+            # Small table "Audit log (this session)" under the panel
+            st.markdown("##### Audit log (this session)")
+            audit_cols = ["account_id", "scam_id", "delay", "evidence", "old_action", "new_action", "timestamp"]
+            audit_records = st.session_state.get("audit_log", [])
+            audit_rows = []
+            for item in audit_records:
+                ev_str = ", ".join(item.get("evidence", [])) if isinstance(item.get("evidence"), list) else str(item.get("evidence", ""))
+                audit_rows.append({
+                    "account_id": item.get("account_id"),
+                    "scam_id": item.get("scam_id"),
+                    "delay": item.get("delay"),
+                    "evidence": ev_str,
+                    "old_action": item.get("old_action"),
+                    "new_action": item.get("new_action"),
+                    "timestamp": item.get("timestamp"),
+                })
+            audit_df = pd.DataFrame(audit_rows, columns=audit_cols)
+            st.dataframe(audit_df, use_container_width=True, hide_index=True)
+
+            # Hold clock box (simulated days)
+            st.markdown("##### Hold Clock")
+            exp_day_input = st.number_input(
+                "Explanation received on day",
+                min_value=0,
+                max_value=60,
+                value=None,
+                step=1,
+                key=f"exp_day_{aid}_{selected_scam}_{selected_delay}",
+            )
+            dec_due = int(exp_day_input + 10) if exp_day_input is not None else 30
+
+            fig_clock = render_hold_clock(explanation_day=exp_day_input)
+            st.plotly_chart(fig_clock, use_container_width=True)
+            st.caption("Based on the draft RBI directions (Sept 2026); draft, may change. Smart Freeze's timed hold auto-releases in 24 hours.")
+
+        # Plain-text decision record download
         rf_str = ", ".join(rf) if rf else "none found"
         ra_str = ", ".join(ra) if ra else "none found"
+
+        acc_audit_entries = [
+            item for item in st.session_state.get("audit_log", [])
+            if item.get("account_id") == aid
+        ]
+        if acc_audit_entries:
+            latest = acc_audit_entries[-1]
+            ev_list_str = ", ".join(latest.get("evidence", []))
+            audit_record_str = f"Approved at {latest.get('timestamp')} | Action: {latest.get('old_action')} -> {latest.get('new_action')} | Evidence: {ev_list_str}"
+        else:
+            audit_record_str = "None"
+
+        if acc_data["action"] != "none":
+            exp_str = f"Day {int(exp_day_input)}" if exp_day_input is not None else "Not provided"
+            clock_record_str = (
+                f"Day 0 (Hold placed), Day 20 (Explanation deadline), "
+                f"Explanation received: {exp_str}, Decision due: Day {dec_due}, "
+                f"Day 60 (Maximum hold)"
+            )
+        else:
+            clock_record_str = "N/A (no hold placed)"
 
         record_text = (
             f"SMART FREEZE DECISION RECORD\n"
@@ -851,6 +1085,8 @@ with tab_case:
             f"Clean Blocked Range:    Rs {smart_clean['low']:,.2f} .. Rs {smart_clean['high']:,.2f}\n"
             f"Needs Human Approval:   {acc_data['needs_human']}\n"
             f"Decision Note:          {acc_data['note']}\n"
+            f"Audit Log Entry:        {audit_record_str}\n"
+            f"Hold Clock Dates:       {clock_record_str}\n"
         )
 
         st.markdown("<br>", unsafe_allow_html=True)
