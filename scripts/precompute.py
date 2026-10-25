@@ -10,6 +10,7 @@ for each scam in data/scam_truth.csv and each delay in [60, 180, 300].
 Saved to data/cache/<scam_id>_<delay>_{trace,scores,harm}.csv.
 """
 
+import json
 from pathlib import Path
 import sys
 import time
@@ -73,9 +74,21 @@ def main() -> None:
             scores_path = cache_dir / f"{sid}_{delay}_scores.csv"
             harm_path = cache_dir / f"{sid}_{delay}_harm.csv"
 
+            # Prepare scores dataframe with reasons_for and reasons_against as JSON strings
+            save_scores = cal_scores.copy()
+            if "reasons_for" in save_scores.columns:
+                save_scores["reasons_for"] = save_scores["reasons_for"].apply(
+                    lambda x: json.dumps(x) if isinstance(x, (list, tuple)) else str(x)
+                )
+            if "reasons_against" in save_scores.columns:
+                save_scores["reasons_against"] = save_scores["reasons_against"].apply(
+                    lambda x: json.dumps(x) if isinstance(x, (list, tuple)) else str(x)
+                )
+
             trace_df.to_csv(trace_path, index=False)
-            cal_scores.to_csv(scores_path, index=False)
+            save_scores.to_csv(scores_path, index=False)
             harm_df.to_csv(harm_path, index=True)  # harm_df is indexed by account_id
+
 
             task_count += 1
             print(f"[{task_count}/{total_tasks}] Precomputed {sid} (delay={delay}m, as_of={as_of}m)")
