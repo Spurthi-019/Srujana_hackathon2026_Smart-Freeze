@@ -1,0 +1,81 @@
+:root {
+  --bg: #F6F4EF;
+  --ink: #14213D;
+  --teal: #0F766E;
+  --amber: #B45309;
+  --card-bg: #FFFFFF;
+  --card-border: 1px solid #D9D5CB;
+  --card-radius: 16px;
+  --muted: #64748B;
+  --border-light: #E2DFD8;
+  
+  --badge-none: #6C757D;
+  --badge-lien: #0D6EFD;
+  --badge-lien-cap: #FD7E14;
+  --badge-hold: #DC3545;
+
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background-color: var(--bg);
+  line-height: 1.5;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  margin: 0;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: Georgia, serif;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  outline: none;
+  transition: all 0.15s ease-in-out;
+}
+
+select, input {
+  font-family: inherit;
+  color: var(--ink);
+}
+
+/* Card utility */
+.card {
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+/* Action Badges */
+.badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #FFFFFF;
+  letter-spacing: 0.03em;
+}
+
+.badge-none { background-color: var(--badge-none); }
+.badge-lien { background-color: var(--badge-lien); }
+.badge-lien_cap { background-color: var(--badge-lien-cap); }
+.badge-timed_hold { background-color: var(--badge-hold); }

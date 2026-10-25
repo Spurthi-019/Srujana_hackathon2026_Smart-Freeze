@@ -5,3 +5,5 @@ __pycache__/
 .DS_Store
 data/*.csv
 data/cache/
+node_modules/
+frontend/dist/
