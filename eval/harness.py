@@ -14,7 +14,7 @@ from engine.harm import harm_all, innocent_blocked
 from engine.score import score_all
 from engine.taint import trace
 
-DELAY = 60
+DELAYS = [60, 180, 300]
 LAMBDAS = [0.0, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0]
 DUST = 1.0
 
@@ -128,7 +128,7 @@ def compute_policy_harm_metrics(
     """
     Computes harm and action counts:
     held = balance(as_of) for timed_hold, lien_amount for lien/lien_cap.
-    clean_low/high = sum of innocent_blocked(balance, tmin, tmax, held).
+    clean_low/high = sum of innocent_blocked(balance, tmin, tmax, held) ONLY over accounts with is_mule=0.
     innocent_touched = is_mule=0 accounts with action != none.
     holds_on_innocents = is_mule=0 with timed_hold.
     mules_actioned = is_mule=1 with action != none.
@@ -157,21 +157,22 @@ def compute_policy_harm_metrics(
             if act == "timed_hold":
                 holds_on_innocents += 1
 
-        tr_info = tr_map.get(aid, {})
-        bal = float(tr_info.get("balance", 0.0))
-        tmin = float(tr_info.get("tainted_min", 0.0))
-        tmax = float(tr_info.get("tainted_max", 0.0))
+            # Only accounts with is_mule=0 contribute to harm (mules' balances are not harm)
+            tr_info = tr_map.get(aid, {})
+            bal = float(tr_info.get("balance", 0.0))
+            tmin = float(tr_info.get("tainted_min", 0.0))
+            tmax = float(tr_info.get("tainted_max", 0.0))
 
-        if act == "timed_hold":
-            held = bal
-        elif act in ("lien", "lien_cap"):
-            held = float(act_info.get("lien_amount", 0.0))
-        else:
-            held = 0.0
+            if act == "timed_hold":
+                held = bal
+            elif act in ("lien", "lien_cap"):
+                held = float(act_info.get("lien_amount", 0.0))
+            else:
+                held = 0.0
 
-        blocked = innocent_blocked(bal, tmin, tmax, held)
-        clean_low += blocked["low"]
-        clean_high += blocked["high"]
+            blocked = innocent_blocked(bal, tmin, tmax, held)
+            clean_low += blocked["low"]
+            clean_high += blocked["high"]
 
     return {
         "clean_low": float(clean_low),
@@ -182,21 +183,21 @@ def compute_policy_harm_metrics(
     }
 
 
-def evaluate_all(
+def evaluate_single_delay(
     accounts: pd.DataFrame,
     txns: pd.DataFrame,
     scams: pd.DataFrame,
-    delay: float = DELAY,
+    delay: float,
     lambdas: List[float] = LAMBDAS,
     dust: float = DUST,
+    scores_cache: Optional[Dict[float, Tuple[pd.DataFrame, pd.DataFrame]]] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
-    Runs the full evaluation across all scams and policies.
-    Returns:
-      results_df: DataFrame aggregated across scams per (policy, lam)
-      metadata: Diagnostics including score calibration stats for the first scam.
+    Evaluates all scams for a single delay value.
+    as_of = min(t0 + delay, 43200).
     """
-    scores_cache: Dict[float, Tuple[pd.DataFrame, pd.DataFrame]] = {}
+    if scores_cache is None:
+        scores_cache = {}
 
     victim_ids = set(accounts.loc[accounts["type"] == "victim", "account_id"])
     exit_ids = set(accounts.loc[accounts["type"] == "exit", "account_id"])
@@ -204,7 +205,6 @@ def evaluate_all(
 
     is_mule_series = accounts.set_index("account_id")["is_mule"].astype(int)
 
-    # Prepare policy tracking list of dicts per scam
     scam_eval_records = []
     first_scam_diag = {}
 
@@ -213,7 +213,7 @@ def evaluate_all(
     for idx, scam_row in sorted_scams.iterrows():
         sid = scam_row["scam_id"]
         t0 = float(scam_row["start_time"])
-        as_of = t0 + delay
+        as_of = min(t0 + delay, 43200.0)
         stolen_total = float(scam_row["total_stolen"])
 
         # Cache score_all per as_of
@@ -289,6 +289,7 @@ def evaluate_all(
 
             scam_eval_records.append({
                 "scam_id": sid,
+                "delay": delay,
                 "policy": pol_name,
                 "lam": lam_val,
                 "total_stolen": stolen_total,
@@ -302,10 +303,7 @@ def evaluate_all(
 
     eval_df = pd.DataFrame(scam_eval_records)
 
-    # Aggregate over scams per (policy, lam)
-    # Sum over scams per (policy, lam): total_stolen, recovered, recovery_rate, clean_low, clean_high, innocent_touched, holds_on_innocents, mules_actioned
     agg_rows = []
-    # Preserve ordering of policies
     policy_order = [("blanket", None), ("lien_only", None)] + [(f"tarazu_{l}", l) for l in lambdas]
 
     for pol_name, lam_val in policy_order:
@@ -315,6 +313,7 @@ def evaluate_all(
         rec_rate = (tot_rec / tot_stolen) if tot_stolen > 0 else 0.0
 
         agg_rows.append({
+            "delay": delay,
             "policy": pol_name,
             "lam": lam_val,
             "total_stolen": round(float(tot_stolen), 2),
@@ -327,5 +326,41 @@ def evaluate_all(
             "mules_actioned": int(sub["mules_actioned"].sum()),
         })
 
-    results_df = pd.DataFrame(agg_rows)
-    return results_df, first_scam_diag
+    return pd.DataFrame(agg_rows), first_scam_diag
+
+
+def evaluate_all(
+    accounts: pd.DataFrame,
+    txns: pd.DataFrame,
+    scams: pd.DataFrame,
+    delays: List[float] = DELAYS,
+    lambdas: List[float] = LAMBDAS,
+    dust: float = DUST,
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """
+    Runs the full evaluation across all scams and policies for each delay in delays.
+    Returns:
+      results_df: DataFrame with delay column, aggregated across scams per (delay, policy, lam)
+      metadata: Diagnostics including score calibration stats for the first scam (at delays[0]).
+    """
+    scores_cache: Dict[float, Tuple[pd.DataFrame, pd.DataFrame]] = {}
+    all_results = []
+    first_diag = {}
+
+    for i, delay in enumerate(delays):
+        res_df, diag = evaluate_single_delay(
+            accounts=accounts,
+            txns=txns,
+            scams=scams,
+            delay=delay,
+            lambdas=lambdas,
+            dust=dust,
+            scores_cache=scores_cache,
+        )
+        if i == 0:
+            first_diag = diag
+        all_results.append(res_df)
+
+    combined_df = pd.concat(all_results, ignore_index=True)
+    return combined_df, first_diag
+

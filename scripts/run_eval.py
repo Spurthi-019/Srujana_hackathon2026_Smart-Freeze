@@ -33,19 +33,26 @@ def main() -> None:
     out_csv = data_dir / "results.csv"
     results_df.to_csv(out_csv, index=False)
 
-    print("=" * 105)
+    print("=" * 115)
     print("SMART FREEZE EVALUATION RESULTS (saved to data/results.csv)")
-    print("=" * 105)
-    print(results_df.to_string(index=False))
-    print("-" * 105)
+    print("=" * 115)
+
+    unique_delays = results_df["delay"].unique()
+    for d in unique_delays:
+        sub = results_df[results_df["delay"] == d]
+        print(f"\n--- DELAY = {d} minutes ---")
+        print(sub.to_string(index=False))
+
+    print("-" * 115)
     print(f"Total evaluation runtime: {runtime:.2f} seconds")
     print(
         f"First scam ({first_scam_diag.get('scam_id')}, as_of={first_scam_diag.get('as_of')}): "
         f"Non-mules with S > 0.5: raw = {first_scam_diag.get('non_mules_raw_s_gt_05')}, "
         f"calibrated = {first_scam_diag.get('non_mules_cal_s_gt_05')}"
     )
-    print("=" * 105)
+    print("=" * 115)
 
 
 if __name__ == "__main__":
     main()
+

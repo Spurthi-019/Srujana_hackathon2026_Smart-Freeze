@@ -80,3 +80,52 @@ def test_harness_on_data():
     assert blanket_rec >= lien_rec - 1e-2, (
         f"Blanket recovered {blanket_rec} < Lien recovered {lien_rec}"
     )
+
+
+def test_innocent_only_harm():
+    """
+    clean_low/clean_high equal the sum over non-mule accounts only
+    (small hand-built case with one mule and one innocent).
+    """
+    from engine.harm import innocent_blocked
+    from eval.harness import compute_policy_harm_metrics
+
+    accounts = pd.DataFrame([
+        {"account_id": "MULE_1", "type": "mule", "is_mule": 1},
+        {"account_id": "INNOCENT_1", "type": "salaried", "is_mule": 0},
+    ])
+
+    trace_df = pd.DataFrame([
+        {
+            "account_id": "MULE_1",
+            "balance": 1000.0,
+            "tainted_min": 200.0,
+            "tainted_max": 500.0,
+        },
+        {
+            "account_id": "INNOCENT_1",
+            "balance": 800.0,
+            "tainted_min": 100.0,
+            "tainted_max": 300.0,
+        },
+    ])
+
+    actions_dict = {
+        "MULE_1": {"action": "timed_hold", "lien_amount": 1000.0, "cap_share": 0.0},
+        "INNOCENT_1": {"action": "timed_hold", "lien_amount": 800.0, "cap_share": 0.0},
+    }
+
+    metrics = compute_policy_harm_metrics(accounts, trace_df, actions_dict)
+
+    # Harm on innocent only:
+    # INNOCENT_1: held=800, balance=800, tmin=100, tmax=300
+    # low = max(0, 800 - 300) = 500
+    # high = max(0, 800 - 100) = 700
+    expected_innocent_blocked = innocent_blocked(800.0, 100.0, 300.0, 800.0)
+
+    assert metrics["clean_low"] == pytest.approx(expected_innocent_blocked["low"], abs=1e-5)
+    assert metrics["clean_high"] == pytest.approx(expected_innocent_blocked["high"], abs=1e-5)
+    assert metrics["innocent_touched"] == 1
+    assert metrics["holds_on_innocents"] == 1
+    assert metrics["mules_actioned"] == 1
+
