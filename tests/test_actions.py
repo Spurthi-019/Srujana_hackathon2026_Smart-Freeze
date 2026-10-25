@@ -129,3 +129,84 @@ def test_missing_key_error():
     }
     with pytest.raises(KeyError):
         decide(row, lam=1)
+
+
+def test_decide_all_on_data():
+    """
+    Test decide_all on data/*.csv for the first scam_id in data/scam_truth.csv:
+    one row per account, no NaN, valid actions;
+    scrambling is_mule/role in inputs leaves the output unchanged.
+    """
+    from pathlib import Path
+    import numpy as np
+    import pandas as pd
+    from engine.actions import decide_all
+    from engine.harm import harm_all
+    from engine.score import score_all
+    from engine.taint import trace
+
+    data_dir = Path(__file__).resolve().parent.parent / "data"
+    accounts = pd.read_csv(data_dir / "accounts.csv")
+    txns = pd.read_csv(data_dir / "transactions.csv")
+    scam_truth = pd.read_csv(data_dir / "scam_truth.csv")
+    account_truth = pd.read_csv(data_dir / "account_truth.csv")
+
+    first_scam_id = scam_truth.iloc[0]["scam_id"]
+    trace_df = trace(accounts, txns, first_scam_id)
+    scores_df = score_all(accounts, txns, seed=42)
+    harm_df = harm_all(accounts, txns)
+
+    first_scam_start = float(scam_truth.iloc[0]["start_time"])
+    dec_df = decide_all(trace_df, scores_df, harm_df, txns, as_of=first_scam_start + 120, lam=1.0)
+
+    # 1. One row per trace_df account
+    assert len(dec_df) == len(trace_df)
+    assert list(dec_df["account_id"]) == list(trace_df["account_id"])
+
+    # 2. No NaN values in any column (losses is dict, others numeric/str)
+    for col in dec_df.columns:
+        if col != "losses":
+            assert not dec_df[col].isna().any(), f"NaN found in column {col}"
+
+    # 3. Valid actions
+    valid_actions = {"none", "lien", "lien_cap", "timed_hold"}
+    assert set(dec_df["action"]).issubset(valid_actions)
+
+    # 4. Scrambling is_mule / role leaves output unchanged
+    # (decide_all itself never reads is_mule or role)
+    accounts_scrambled = accounts.copy()
+    rng = np.random.default_rng(999)
+    accounts_scrambled["is_mule"] = rng.permutation(accounts_scrambled["is_mule"].values)
+
+    # Scramble role in account_truth as well if passed
+    trace_df_scrambled = trace(accounts_scrambled, txns, first_scam_id)
+    dec_df_scrambled = decide_all(trace_df_scrambled, scores_df, harm_df, txns, as_of=first_scam_start + 120, lam=1.0)
+
+    pd.testing.assert_frame_equal(dec_df, dec_df_scrambled)
+
+
+def test_decide_all_missing_defaults():
+    """
+    Missing from scores_df -> S=0.
+    Missing from harm_df -> harm_score=0.5.
+    as_of=None -> recent_inflow=0.
+    """
+    import pandas as pd
+    from engine.actions import decide_all
+
+    trace_df = pd.DataFrame([
+        {"account_id": "ACC_X", "balance": 5000.0, "tainted_min": 1000.0, "tainted_max": 2000.0}
+    ])
+    # Empty scores and harm
+    scores_df = pd.DataFrame(columns=["account_id", "S"])
+    harm_df = pd.DataFrame(columns=["harm_score"]).set_index(pd.Index([], name="account_id"))
+    txns = pd.DataFrame(columns=["time", "dst", "amount"])
+
+    res = decide_all(trace_df, scores_df, harm_df, txns, as_of=None, lam=1.0)
+    assert len(res) == 1
+    # When S=0, s = tmin = 1000.
+    # harm_score = 0.5.
+    # clean = 5000 - 1000 = 4000.
+    assert res.iloc[0]["action"] == "lien"
+    assert res.iloc[0]["lien_amount"] == 1000.0
+

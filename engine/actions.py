@@ -113,3 +113,90 @@ def decide(row: Mapping[str, Any], lam: float) -> Dict[str, Any]:
         "losses": losses,
         "note": note,
     }
+
+
+def decide_all(
+    trace_df: Any,
+    scores_df: Any,
+    harm_df: Any,
+    txns: Any,
+    as_of: Any = None,
+    lam: float = 1.0,
+) -> Any:
+    """
+    Decide actions for all accounts in trace_df.
+
+    Args:
+        trace_df: DataFrame with account_id, balance, tainted_min, tainted_max (from engine.taint.trace).
+        scores_df: DataFrame with account_id, S (from engine.score.score_all).
+        harm_df: DataFrame indexed by account_id with harm_score (from engine.harm.harm_all).
+        txns: DataFrame with time, dst, amount.
+        as_of: Optional cutoff time in minutes. If provided, recent_inflow is computed
+               as sum of amounts received by dst in (as_of - 120, as_of]. If None, recent_inflow is 0.
+        lam: Trade-off parameter lambda, defaults to 1.0.
+
+    Returns:
+        DataFrame: one row per trace_df account_id with the decide() fields:
+            [account_id, action, lien_amount, cap_share, hold_hours, needs_human,
+             expected_recovered, expected_clean_blocked, losses, note]
+    """
+    import pandas as pd
+
+    # Precompute recent_inflow per account
+    recent_inflows = {}
+    if as_of is not None and txns is not None and len(txns) > 0:
+        window_start = as_of - 120
+        recent_txns = txns[(txns["time"] > window_start) & (txns["time"] <= as_of)]
+        if len(recent_txns) > 0:
+            recent_inflows = recent_txns.groupby("dst")["amount"].sum().to_dict()
+
+    # Precompute scores mapping (account_id -> S)
+    scores_map = {}
+    if scores_df is not None and "account_id" in scores_df.columns and "S" in scores_df.columns:
+        scores_map = dict(zip(scores_df["account_id"], scores_df["S"]))
+
+    # Precompute harm mapping (index or column -> harm_score)
+    harm_map = {}
+    if harm_df is not None:
+        if "harm_score" in harm_df.columns:
+            harm_map = harm_df["harm_score"].to_dict()
+
+    results = []
+    for _, t_row in trace_df.iterrows():
+        aid = t_row["account_id"]
+        bal = float(t_row["balance"])
+        tmin = float(t_row["tainted_min"])
+        tmax = float(t_row["tainted_max"])
+        S = float(scores_map.get(aid, 0.0))
+        h_score = float(harm_map.get(aid, 0.5))
+        r_inflow = float(recent_inflows.get(aid, 0.0))
+
+        row_dict = {
+            "account_id": aid,
+            "balance": bal,
+            "tainted_min": tmin,
+            "tainted_max": tmax,
+            "S": S,
+            "harm_score": h_score,
+            "recent_inflow": r_inflow,
+        }
+
+        dec_res = decide(row_dict, lam=lam)
+        dec_res["account_id"] = aid
+        results.append(dec_res)
+
+    res_df = pd.DataFrame(results)
+    field_order = [
+        "account_id",
+        "action",
+        "lien_amount",
+        "cap_share",
+        "hold_hours",
+        "needs_human",
+        "expected_recovered",
+        "expected_clean_blocked",
+        "losses",
+        "note",
+    ]
+    return res_df[field_order].copy()
+

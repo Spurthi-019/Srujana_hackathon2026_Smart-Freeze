@@ -10,6 +10,7 @@ trace(accounts, txns, scam_id) -> DataFrame[account_id, balance, tainted_prop, t
 mule_score(account_id, scores_df) -> dict(S, B, T, H, reasons_for, reasons_against)
 harm_all(accounts, txns, as_of=None) -> DataFrame indexed by account_id [harm_score, salary_dependence, float_need, thin_cover, cover_days]
 innocent_blocked(balance, tainted_min, tainted_max, held) -> dict(low, high)
-decide(row, lam) -> dict(action in {none, lien, lien_cap, timed_hold}, lien_amount, note)
+decide(row, lam) -> dict(action in {none, lien, lien_cap, timed_hold}, lien_amount, cap_share, hold_hours, needs_human, expected_recovered, expected_clean_blocked, losses, note)
+decide_all(trace_df, scores_df, harm_df, txns, as_of=None, lam=1.0) -> DataFrame[account_id, action, lien_amount, cap_share, hold_hours, needs_human, expected_recovered, expected_clean_blocked, losses, note]
 
 Reference test (must pass): account R opening balance 1000 (own). Victim V sends R 4000. R sends out 2000. A clean account sends R 2000. R sends out 1000. Final balance 4000. Expected tainted in R: proportional 1920, FIFO 2000, LIBR 3000.
