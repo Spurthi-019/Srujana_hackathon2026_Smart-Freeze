@@ -36,15 +36,31 @@ def main() -> None:
     print("RULE-ROBUSTNESS EVALUATION RESULTS (saved to data/results_robust.csv)")
     print("=" * 115)
 
-    unique_delays = results_df["delay"].unique()
-    for d in unique_delays:
+    display_cols = [
+        "policy",
+        "lam",
+        "rec_rate_mean",
+        "rec_rate_worst",
+        "clean_blocked_mean",
+        "clean_blocked_worst",
+    ]
+
+    target_delays = [180, 300]
+    for d in target_delays:
         sub = results_df[results_df["delay"] == d]
+        mask = (
+            sub["policy"].isin(["lien_only", "lien_prop", "lien_fifo", "lien_libr"])
+            | ((sub["policy"] == "tarazu_0.1") & (sub["lam"] == 0.1))
+            | ((sub["policy"] == "tarazu_1.0") & (sub["lam"] == 1.0))
+        )
+        filtered = sub[mask][display_cols]
         print(f"\n--- DELAY = {d} minutes ---")
-        print(sub.to_string(index=False))
+        print(filtered.to_string(index=False))
 
     print("-" * 115)
     print(f"Total evaluation runtime: {runtime:.2f} seconds")
     print("=" * 115)
+
 
 
 if __name__ == "__main__":

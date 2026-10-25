@@ -42,7 +42,7 @@ def test_hand_built_rules():
                 clean[r] = 0.0
         return rec, clean
 
-    # 1. lien 1920: clean 0 under all rules, recovery 1920 under all rules (capped at 1920)
+    # 1. lien 1920 (lien_prop): clean 0 under all rules, recovery 1920 under all rules (capped at 1920)
     rec_1920, clean_1920 = eval_held(1920.0)
     assert clean_1920["tainted_prop"] == pytest.approx(0.0)
     assert clean_1920["tainted_fifo"] == pytest.approx(0.0)
@@ -60,7 +60,7 @@ def test_hand_built_rules():
     assert rec_4000["tainted_fifo"] == pytest.approx(2000.0)
     assert rec_4000["tainted_libr"] == pytest.approx(3000.0)
 
-    # 3. lien 3000: clean 1080/1000/0, recovery 1920/2000/3000
+    # 3. lien 3000 (lien_libr): clean 1080/1000/0, recovery 1920/2000/3000
     rec_3000, clean_3000 = eval_held(3000.0)
     assert clean_3000["tainted_prop"] == pytest.approx(1080.0)
     assert clean_3000["tainted_fifo"] == pytest.approx(1000.0)
@@ -68,6 +68,7 @@ def test_hand_built_rules():
     assert rec_3000["tainted_prop"] == pytest.approx(1920.0)
     assert rec_3000["tainted_fifo"] == pytest.approx(2000.0)
     assert rec_3000["tainted_libr"] == pytest.approx(3000.0)
+
 
 
 def test_held_amount_computation():

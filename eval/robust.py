@@ -121,7 +121,21 @@ def evaluate_single_delay_robust(
         }
         policies.append(("lien_only", None, lien_actions))
 
-        # 3. tarazu(lam)
+        # 3. single-rule baselines: lien_prop, lien_fifo, lien_libr
+        # held = min(balance, tainted_<rule>)
+        cand_by_id = candidates_df.set_index("account_id").to_dict(orient="index")
+        for r_name in ["prop", "fifo", "libr"]:
+            full_r = f"tainted_{r_name}"
+            r_actions = {
+                aid: {
+                    "action": "lien",
+                    "held": min(bal_dict.get(aid, 0.0), float(cand_by_id.get(aid, {}).get(full_r, 0.0))),
+                }
+                for aid in cand_aids
+            }
+            policies.append((f"lien_{r_name}", None, r_actions))
+
+        # 4. tarazu(lam)
         for lam in lams:
             if len(candidates_df) > 0:
                 dec_df = decide_all(candidates_df, cal_scores, harm_df, txns, as_of=as_of, lam=lam)
@@ -196,7 +210,12 @@ def evaluate_single_delay_robust(
     scam_df = pd.DataFrame(scam_records)
 
     agg_rows = []
-    policy_order = [("blanket", None), ("lien_only", None)] + [(f"tarazu_{l}", l) for l in lams]
+    policy_order = (
+        [("blanket", None), ("lien_only", None)]
+        + [("lien_prop", None), ("lien_fifo", None), ("lien_libr", None)]
+        + [(f"tarazu_{l}", l) for l in lams]
+    )
+
 
     for pol_name, lam_val in policy_order:
         sub = scam_df[scam_df["policy"] == pol_name]
