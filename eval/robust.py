@@ -121,8 +121,8 @@ def evaluate_single_delay_robust(
         }
         policies.append(("lien_only", None, lien_actions))
 
-        # 3. single-rule baselines: lien_prop, lien_fifo, lien_libr
-        # held = min(balance, tainted_<rule>)
+        # 3. single-rule baselines: lien_prop, lien_fifo, lien_libr, lien_min
+        # held = min(balance, tainted_<rule>) or min(balance, tainted_min)
         cand_by_id = candidates_df.set_index("account_id").to_dict(orient="index")
         for r_name in ["prop", "fifo", "libr"]:
             full_r = f"tainted_{r_name}"
@@ -134,6 +134,16 @@ def evaluate_single_delay_robust(
                 for aid in cand_aids
             }
             policies.append((f"lien_{r_name}", None, r_actions))
+
+        lien_min_actions = {
+            aid: {
+                "action": "lien",
+                "held": min(bal_dict.get(aid, 0.0), float(cand_by_id.get(aid, {}).get("tainted_min", 0.0))),
+            }
+            for aid in cand_aids
+        }
+        policies.append(("lien_min", None, lien_min_actions))
+
 
         # 4. tarazu(lam)
         for lam in lams:
@@ -212,9 +222,10 @@ def evaluate_single_delay_robust(
     agg_rows = []
     policy_order = (
         [("blanket", None), ("lien_only", None)]
-        + [("lien_prop", None), ("lien_fifo", None), ("lien_libr", None)]
+        + [("lien_prop", None), ("lien_fifo", None), ("lien_libr", None), ("lien_min", None)]
         + [(f"tarazu_{l}", l) for l in lams]
     )
+
 
 
     for pol_name, lam_val in policy_order:

@@ -69,6 +69,17 @@ def test_hand_built_rules():
     assert rec_3000["tainted_fifo"] == pytest.approx(2000.0)
     assert rec_3000["tainted_libr"] == pytest.approx(3000.0)
 
+    # 4. lien_min: held = min(balance, tainted_min) = min(4000, 1920) = 1920
+    # clean blocked is 0 under all rules, recovery is 1920 under all rules
+    rec_min, clean_min = eval_held(1920.0)
+    assert clean_min["tainted_prop"] == pytest.approx(0.0)
+    assert clean_min["tainted_fifo"] == pytest.approx(0.0)
+    assert clean_min["tainted_libr"] == pytest.approx(0.0)
+    assert rec_min["tainted_prop"] == pytest.approx(1920.0)
+    assert rec_min["tainted_fifo"] == pytest.approx(1920.0)
+    assert rec_min["tainted_libr"] == pytest.approx(1920.0)
+
+
 
 
 def test_held_amount_computation():
