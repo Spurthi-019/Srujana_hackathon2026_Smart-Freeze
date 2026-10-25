@@ -1,4 +1,5 @@
 import React from 'react';
+import { HeartPulse } from 'lucide-react';
 
 /**
  * HarmPanel: Displays small metrics for financial harm assessment:
@@ -47,15 +48,18 @@ export default function HarmPanel({
   return (
     <div className="card-panel harm-panel">
       <div className="panel-header">
-        <h5 className="panel-title">Harm Model Assessment</h5>
-        <span className="panel-subbadge">Vulnerability metrics</span>
+        <div className="panel-title-group">
+          <HeartPulse size={16} className="panel-icon text-red" />
+          <h5 className="panel-title">Harm Model Assessment</h5>
+        </div>
+        <span className="panel-subbadge">Vulnerability</span>
       </div>
 
       <div className="harm-metrics-grid">
         {metrics.map((m) => (
           <div key={m.label} className={`harm-metric-card ${m.highlight ? 'metric-alert' : ''}`}>
             <span className="metric-label">{m.label}</span>
-            <span className="metric-value">{m.value}</span>
+            <span className="metric-value tabular-nums">{m.value}</span>
             <span className="metric-subtext">{m.subtext}</span>
           </div>
         ))}

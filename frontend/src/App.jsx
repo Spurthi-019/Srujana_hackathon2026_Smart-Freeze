@@ -1,7 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import {
+  ShieldAlert,
+  SlidersHorizontal,
+  Search,
+  Filter,
+  TrendingDown,
+  Lock,
+  Users,
+  AlertTriangle,
+  FileSpreadsheet,
+  Layers,
+  Sparkles,
+} from 'lucide-react';
 import FlowGraph from './components/FlowGraph';
 import AccountCard from './components/AccountCard';
+import { formatMoney, formatMoneyExact } from './utils/format';
 import './App.css';
+
+const ACTION_SEVERITY_ORDER = {
+  timed_hold: 4,
+  lien_cap: 3,
+  lien: 2,
+  none: 1,
+};
 
 export default function App() {
   const [scams, setScams] = useState([]);
@@ -13,9 +34,18 @@ export default function App() {
   const [selectedAccountId, setSelectedAccountId] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
 
+  // Top Tabs: 'case' | 'tradeoff'
+  const [activeTab, setActiveTab] = useState('case');
+
+  // Review list controls: search & filter chip
+  const [searchQuery, setSearchQuery] = useState('');
+  const [actionFilter, setActionFilter] = useState('all');
+
   const [loadingScams, setLoadingScams] = useState(true);
   const [loadingData, setLoadingData] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
+
+  const detailSectionRef = useRef(null);
 
   const lam = parseFloat(Math.pow(10, logLam).toFixed(4));
 
@@ -49,25 +79,36 @@ export default function App() {
     setLoadingData(true);
     setErrorMsg(null);
 
-    const graphPromise = fetch(`/api/graph?scam_id=${selectedScam}&delay=${delay}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`Graph API returned ${res.status}`);
-        return res.json();
-      });
+    const graphPromise = fetch(`/api/graph?scam_id=${selectedScam}&delay=${delay}`).then((res) => {
+      if (!res.ok) throw new Error(`Graph API returned ${res.status}`);
+      return res.json();
+    });
 
-    const decPromise = fetch(`/api/decisions?scam_id=${selectedScam}&delay=${delay}&lam=${lam}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`Decisions API returned ${res.status}`);
-        return res.json();
-      });
+    const decPromise = fetch(`/api/decisions?scam_id=${selectedScam}&delay=${delay}&lam=${lam}`).then((res) => {
+      if (!res.ok) throw new Error(`Decisions API returned ${res.status}`);
+      return res.json();
+    });
 
     Promise.all([graphPromise, decPromise])
       .then(([gData, dData]) => {
         setGraphData(gData);
         setDecisions(dData);
-        // Default selection to first review account if none selected
-        if (dData.length > 0 && !selectedAccountId) {
-          setSelectedAccountId(dData[0].account_id);
+
+        // Auto-select the highest-priority flagged account on first load or when switching
+        if (dData.length > 0) {
+          const sorted = [...dData].sort((a, b) => {
+            const sevDiff = (ACTION_SEVERITY_ORDER[b.action] || 0) - (ACTION_SEVERITY_ORDER[a.action] || 0);
+            if (sevDiff !== 0) return sevDiff;
+            return (b.tainted_max || 0) - (a.tainted_max || 0);
+          });
+
+          // If current selection is not in list, auto-select highest priority
+          const currentExists = dData.some((d) => d.account_id === selectedAccountId);
+          if (!selectedAccountId || !currentExists) {
+            setSelectedAccountId(sorted[0].account_id);
+          }
+        } else {
+          setSelectedAccountId(null);
         }
       })
       .catch((err) => {
@@ -78,77 +119,146 @@ export default function App() {
       });
   }, [selectedScam, delay, lam]);
 
-  const selectedDecision = decisions.find((d) => d.account_id === selectedAccountId);
+  // Selected scam object
+  const currentScam = useMemo(() => {
+    return scams.find((s) => s.scam_id === selectedScam) || {};
+  }, [scams, selectedScam]);
+
+  // KPI Calculations
+  const totalStolen = currentScam.total_stolen || 0;
+  const accountsFlaggedCount = decisions.filter((d) => (d.tainted_max || 0) > 1.0).length;
+  const holdCount = decisions.filter((d) => d.action === 'timed_hold').length;
+
+  const totalHeldAmount = useMemo(() => {
+    return decisions.reduce((acc, d) => {
+      if (d.action === 'timed_hold') return acc + (d.balance || 0);
+      if (d.action === 'lien') return acc + Math.min(d.balance || 0, d.lien_amount || 0);
+      if (d.action === 'lien_cap') {
+        const base = Math.min(d.balance || 0, d.lien_amount || 0);
+        return acc + base + (d.cap_share || 0) * Math.max(0, (d.balance || 0) - base);
+      }
+      return acc;
+    }, 0);
+  }, [decisions]);
+
+  // Filtered & Sorted Review Accounts
+  const sortedAndFilteredDecisions = useMemo(() => {
+    return decisions
+      .filter((d) => {
+        if (searchQuery.trim() !== '') {
+          const matchId = d.account_id.toLowerCase().includes(searchQuery.toLowerCase().trim());
+          if (!matchId) return false;
+        }
+        if (actionFilter !== 'all' && d.action !== actionFilter) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const sevA = ACTION_SEVERITY_ORDER[a.action] || 0;
+        const sevB = ACTION_SEVERITY_ORDER[b.action] || 0;
+        if (sevA !== sevB) return sevB - sevA; // High severity first
+        return (b.tainted_max || 0) - (a.tainted_max || 0); // High taint first
+      });
+  }, [decisions, searchQuery, actionFilter]);
+
+  const handleAccountClick = (id) => {
+    setSelectedAccountId(id);
+    if (detailSectionRef.current) {
+      detailSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
 
   return (
     <div className="app-container">
-      {/* Top Banner */}
-      <header className="top-banner">
-        <div className="banner-content">
-          <span>⚠️</span>
-          <span>SIMULATED DATA - prototype, a human approves every action</span>
+      {/* 1. Top Bar */}
+      <header className="top-bar">
+        <div className="top-bar-left">
+          <div className="logo-badge">
+            <ShieldAlert size={20} className="logo-icon" />
+            <span className="logo-text">Smart Freeze</span>
+          </div>
+          <span className="logo-subtitle">
+            Proportionate freezing decision support
+          </span>
         </div>
-        <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>
-          Draft RBI Directions Model
+
+        <div className="top-bar-center">
+          <div className="simulated-data-pill">
+            <span className="pill-dot" />
+            <span>SIMULATED DATA — a human approves every action</span>
+          </div>
+        </div>
+
+        <div className="top-bar-right">
+          <div className="nav-tabs">
+            <button
+              type="button"
+              className={`nav-tab ${activeTab === 'case' ? 'active' : ''}`}
+              onClick={() => setActiveTab('case')}
+            >
+              Case view
+            </button>
+            <button
+              type="button"
+              className={`nav-tab ${activeTab === 'tradeoff' ? 'active' : ''}`}
+              onClick={() => setActiveTab('tradeoff')}
+            >
+              Trade-off
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Main Body */}
-      <main className="app-body">
-        {/* Left Sidebar */}
-        <aside className="card sidebar">
-          <div>
-            <h2 className="sidebar-title">Smart Freeze</h2>
-            <p style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>
-              Targeted hold & lien prototype
-            </p>
-          </div>
+      {/* 2. Controls Toolbar Directly Under Top Bar */}
+      <section className="controls-toolbar">
+        {/* Scam Incident Select */}
+        <div className="toolbar-group">
+          <label className="toolbar-label">Scam Incident</label>
+          <select
+            className="toolbar-select"
+            value={selectedScam}
+            onChange={(e) => {
+              setSelectedScam(e.target.value);
+              setSelectedAccountId(null);
+            }}
+            disabled={loadingScams || scams.length === 0}
+          >
+            {scams.map((s) => (
+              <option key={s.scam_id} value={s.scam_id}>
+                {s.scam_id} (Stolen: {formatMoney(s.total_stolen)})
+              </option>
+            ))}
+          </select>
+        </div>
 
-          {/* Scam Selector */}
-          <div className="control-group">
-            <label className="control-label">Scam Incident</label>
-            <select
-              className="select-input"
-              value={selectedScam}
-              onChange={(e) => {
-                setSelectedScam(e.target.value);
-                setSelectedAccountId(null);
-              }}
-              disabled={loadingScams || scams.length === 0}
-            >
-              {scams.map((s) => (
-                <option key={s.scam_id} value={s.scam_id}>
-                  {s.scam_id} (Stolen: ₹{Number(s.total_stolen || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })})
-                </option>
-              ))}
-            </select>
+        {/* Decision Delay Segmented Control */}
+        <div className="toolbar-group">
+          <label className="toolbar-label">Decision Delay</label>
+          <div className="segmented-control">
+            {[60, 180, 300].map((d) => (
+              <button
+                key={d}
+                type="button"
+                className={`segment-btn ${delay === d ? 'active' : ''}`}
+                onClick={() => setDelay(d)}
+              >
+                {d} min
+              </button>
+            ))}
           </div>
+        </div>
 
-          {/* Delay Selector */}
-          <div className="control-group">
-            <label className="control-label">Decision Delay</label>
-            <select
-              className="select-input"
-              value={delay}
-              onChange={(e) => setDelay(parseInt(e.target.value, 10))}
-            >
-              <option value={60}>60 min after scam start</option>
-              <option value={180}>180 min after scam start</option>
-              <option value={300}>300 min after scam start</option>
-            </select>
+        {/* Lambda Trade-off Slider */}
+        <div className="toolbar-group toolbar-slider-group">
+          <div className="slider-label-row">
+            <span className="toolbar-label">
+              Trade-off λ: <strong className="text-teal tabular-nums">λ = {lam.toFixed(4)}</strong>
+            </span>
+            <span className="slider-subtext">max recovery &lt;—&gt; min harm</span>
           </div>
-
-          {/* Lambda Slider */}
-          <div className="control-group">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label className="control-label">Trade-off λ</label>
-              <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--teal)' }}>
-                λ = {lam.toFixed(4)}
-              </span>
-            </div>
-            <p style={{ fontSize: '0.75rem', color: 'var(--muted)', margin: '2px 0 6px 0' }}>
-              max recovery &lt;—&gt; min harm
-            </p>
+          <div className="slider-input-row">
+            <span className="slider-bound">0.001</span>
             <input
               type="range"
               min={-3.0}
@@ -156,113 +266,242 @@ export default function App() {
               step={0.05}
               value={logLam}
               onChange={(e) => setLogLam(parseFloat(e.target.value))}
-              style={{ width: '100%', accentColor: 'var(--teal)', cursor: 'pointer' }}
+              className="toolbar-slider"
             />
-            <div className="slider-values">
-              <span>0.001 (Aggressive)</span>
-              <span>0.250 (Protective)</span>
-            </div>
+            <span className="slider-bound">0.250</span>
           </div>
-        </aside>
+        </div>
+      </section>
 
-        {/* Main Content Area */}
-        <section className="main-area">
-          {errorMsg ? (
+      {/* Main Tab Content */}
+      {activeTab === 'tradeoff' ? (
+        <main className="tab-placeholder-main">
+          <div className="card tradeoff-placeholder-card">
+            <SlidersHorizontal size={40} className="text-teal" />
+            <h3>Policy Trade-Off Analysis</h3>
+            <p className="placeholder-text">
+              Coming next: Multi-policy evaluation comparing Blanket Freeze, Pure FIFO, Pure LIBR,
+              and Smart Freeze frontier across recovery vs clean-money harm metrics.
+            </p>
+            <div className="tradeoff-info-badge">
+              Active Trade-off Parameter: λ = {lam.toFixed(4)} at Delay {delay} min
+            </div>
+            <button
+              type="button"
+              className="return-case-btn"
+              onClick={() => setActiveTab('case')}
+            >
+              Return to Case View
+            </button>
+          </div>
+        </main>
+      ) : (
+        <main className="case-view-container">
+          {/* Error Banner */}
+          {errorMsg && (
             <div className="error-banner">
-              <strong>Connection Error</strong>
-              <p>{errorMsg}</p>
+              <AlertTriangle size={20} className="text-red" />
+              <div className="error-content">
+                <strong>Connection or Data Error</strong>
+                <p>{errorMsg}</p>
+              </div>
               <button
+                type="button"
                 onClick={() => window.location.reload()}
-                style={{
-                  padding: '6px 14px',
-                  borderRadius: '8px',
-                  background: '#991B1B',
-                  color: '#FFFFFF',
-                  marginTop: '8px',
-                }}
+                className="retry-btn"
               >
                 Retry
               </button>
             </div>
-          ) : loadingData && !graphData ? (
-            <div className="card" style={{ padding: '60px', textAlign: 'center', color: 'var(--muted)' }}>
-              Loading scam flow graph...
-            </div>
-          ) : (
-            graphData && (
-              <FlowGraph
-                graphData={graphData}
-                selectedAccountId={selectedAccountId}
-                onSelectAccount={setSelectedAccountId}
-              />
-            )
           )}
-        </section>
 
-        {/* Right Panel: Accounts to Review & Card Placeholder */}
-        <aside className="right-panel">
-          {/* Review List */}
-          <div className="card" style={{ padding: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ fontSize: '1.15rem' }}>Accounts to review</h3>
-              <span style={{ fontSize: '0.8rem', color: 'var(--muted)', fontWeight: 600 }}>
-                {decisions.length} flagged
-              </span>
+          {/* 3. KPI Strip: 4 Cards from existing data */}
+          <section className="kpi-strip">
+            <div className="card kpi-card">
+              <div className="kpi-icon-wrap kpi-icon-red">
+                <ShieldAlert size={18} />
+              </div>
+              <div className="kpi-content">
+                <span className="kpi-label">Total Stolen</span>
+                <span className="kpi-value tabular-nums" title={formatMoneyExact(totalStolen)}>
+                  {formatMoney(totalStolen)}
+                </span>
+                <span className="kpi-subtext">Incident {selectedScam}</span>
+              </div>
             </div>
 
-            {decisions.length === 0 ? (
-              <div style={{ padding: '24px 8px', textAlign: 'center', color: 'var(--muted)', fontSize: '0.85rem' }}>
-                No candidate accounts with tainted money &gt; ₹1.00.
+            <div className="card kpi-card">
+              <div className="kpi-icon-wrap kpi-icon-amber">
+                <Users size={18} />
               </div>
-            ) : (
-              <div className="review-list">
-                {decisions.map((item) => {
-                  const isSelected = selectedAccountId === item.account_id;
-                  const heldAmt =
-                    item.action === 'timed_hold'
-                      ? item.balance
-                      : item.action === 'lien'
-                      ? item.lien_amount
-                      : item.action === 'lien_cap'
-                      ? item.lien_amount + item.cap_share * Math.max(0, item.balance - item.lien_amount)
-                      : 0;
+              <div className="kpi-content">
+                <span className="kpi-label">Accounts Flagged</span>
+                <span className="kpi-value tabular-nums">{accountsFlaggedCount}</span>
+                <span className="kpi-subtext">Tainted max &gt; ₹1.00</span>
+              </div>
+            </div>
 
-                  return (
-                    <div
-                      key={item.account_id}
-                      className={`account-item ${isSelected ? 'selected' : ''}`}
-                      onClick={() => setSelectedAccountId(item.account_id)}
-                    >
-                      <div className="account-info">
-                        <span className="account-id">{item.account_id}</span>
-                        <span className="account-type">{item.type}</span>
-                      </div>
-                      <div className="account-action">
-                        <span className={`badge badge-${item.action}`}>
-                          {item.action}
-                        </span>
-                        <span className="account-held">
-                          ₹{Number(heldAmt || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                        </span>
-                      </div>
+            <div className="card kpi-card">
+              <div className="kpi-icon-wrap kpi-icon-blue">
+                <Lock size={18} />
+              </div>
+              <div className="kpi-content">
+                <span className="kpi-label">Recommended for Hold</span>
+                <span className="kpi-value tabular-nums">{holdCount}</span>
+                <span className="kpi-subtext">Timed hold auto-releases in 24h</span>
+              </div>
+            </div>
+
+            <div className="card kpi-card">
+              <div className="kpi-icon-wrap kpi-icon-teal">
+                <TrendingDown size={18} />
+              </div>
+              <div className="kpi-content">
+                <span className="kpi-label">Sure Part Held</span>
+                <span className="kpi-value tabular-nums" title={formatMoneyExact(totalHeldAmount)}>
+                  {formatMoney(totalHeldAmount)}
+                </span>
+                <span className="kpi-subtext">Targeted lock on sure taint</span>
+              </div>
+            </div>
+          </section>
+
+          {/* 4. Main Row, Equal Height (approx 560px): Graph (2/3) + Accounts to review (1/3) */}
+          <section className="main-row">
+            {/* Graph Card (approx 2/3 width) */}
+            <div className="graph-column">
+              {loadingData && !graphData ? (
+                <div className="card graph-skeleton">
+                  <div className="spinner" />
+                  <p>Synthesizing money-flow network graph...</p>
+                </div>
+              ) : (
+                graphData && (
+                  <FlowGraph
+                    graphData={graphData}
+                    selectedAccountId={selectedAccountId}
+                    onSelectAccount={handleAccountClick}
+                  />
+                )
+              )}
+            </div>
+
+            {/* Accounts to Review Card (approx 1/3 width) */}
+            <div className="review-column">
+              <div className="card review-card">
+                <div className="review-card-header">
+                  <div className="review-title-group">
+                    <h4 className="review-title">Accounts to review</h4>
+                    <span className="review-count-badge tabular-nums">
+                      {sortedAndFilteredDecisions.length} / {decisions.length}
+                    </span>
+                  </div>
+
+                  {/* Search Box */}
+                  <div className="search-box-wrap">
+                    <Search size={14} className="search-icon" />
+                    <input
+                      type="text"
+                      placeholder="Search account ID..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="search-input"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        className="search-clear-btn"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Action Filter Chips */}
+                  <div className="filter-chips">
+                    {[
+                      { id: 'all', label: 'All' },
+                      { id: 'timed_hold', label: 'Hold' },
+                      { id: 'lien_cap', label: 'Lien+Cap' },
+                      { id: 'lien', label: 'Lien' },
+                      { id: 'none', label: 'None' },
+                    ].map((chip) => (
+                      <button
+                        key={chip.id}
+                        type="button"
+                        className={`filter-chip ${actionFilter === chip.id ? 'active' : ''} chip-${chip.id}`}
+                        onClick={() => setActionFilter(chip.id)}
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Scrollable List */}
+                <div className="review-scroll-list">
+                  {sortedAndFilteredDecisions.length === 0 ? (
+                    <div className="empty-review-list">
+                      No matching accounts found for query "{searchQuery}".
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                  ) : (
+                    sortedAndFilteredDecisions.map((item) => {
+                      const isSelected = selectedAccountId === item.account_id;
+                      const heldAmt =
+                        item.action === 'timed_hold'
+                          ? item.balance
+                          : item.action === 'lien'
+                          ? Math.min(item.balance, item.lien_amount)
+                          : item.action === 'lien_cap'
+                          ? Math.min(item.balance, item.lien_amount) +
+                            item.cap_share * Math.max(0, item.balance - item.lien_amount)
+                          : 0;
 
-          {/* Account Card */}
-          <AccountCard
-            accountId={selectedAccountId}
-            scamId={selectedScam}
-            delay={delay}
-            lam={lam}
-            auditLog={auditLog}
-            onApproveRelease={(entry) => setAuditLog((prev) => [entry, ...prev])}
-          />
-        </aside>
-      </main>
+                      return (
+                        <div
+                          key={item.account_id}
+                          className={`account-list-item ${isSelected ? 'selected' : ''}`}
+                          onClick={() => handleAccountClick(item.account_id)}
+                        >
+                          <div className="item-left">
+                            <span className="item-account-id">{item.account_id}</span>
+                            <span className="item-account-type">{item.type}</span>
+                          </div>
+
+                          <div className="item-right">
+                            <span className={`badge badge-${item.action}`}>
+                              {item.action}
+                            </span>
+                            <span
+                              className="item-held-val tabular-nums"
+                              title={`Held: ${formatMoneyExact(heldAmt)} (Balance: ${formatMoneyExact(item.balance)})`}
+                            >
+                              {formatMoney(heldAmt)}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* 5. Account Detail Section: Full-width underneath main row */}
+          <div ref={detailSectionRef} className="account-detail-anchor">
+            <AccountCard
+              accountId={selectedAccountId}
+              scamId={selectedScam}
+              delay={delay}
+              lam={lam}
+              auditLog={auditLog}
+              onApproveRelease={(entry) => setAuditLog((prev) => [entry, ...prev])}
+            />
+          </div>
+        </main>
+      )}
     </div>
   );
 }

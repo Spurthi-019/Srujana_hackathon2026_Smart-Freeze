@@ -1,21 +1,26 @@
 :root {
-  --bg: #F6F4EF;
-  --ink: #14213D;
-  --teal: #0F766E;
-  --amber: #B45309;
-  --card-bg: #FFFFFF;
-  --card-border: 1px solid #D9D5CB;
-  --card-radius: 16px;
-  --muted: #64748B;
-  --border-light: #E2DFD8;
-  
-  --badge-none: #6C757D;
-  --badge-lien: #0D6EFD;
-  --badge-lien-cap: #FD7E14;
-  --badge-hold: #DC3545;
+  --bg: #0B1220;
+  --surface: #121B2E;
+  --surface-2: #18233B;
+  --border: #223049;
+  --text: #E6EAF2;
+  --muted: #94A3B8;
+  --teal: #2DD4BF;
+  --amber: #F59E0B;
+  --red: #F43F5E;
+  --blue: #60A5FA;
 
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  color: var(--ink);
+  --card-bg: var(--surface);
+  --card-border: 1px solid var(--border);
+  --card-radius: 14px;
+  
+  --badge-none: #475569;
+  --badge-lien: #3B82F6;
+  --badge-lien-cap: #F59E0B;
+  --badge-hold: #F43F5E;
+
+  font-family: 'Inter Variable', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--text);
   background-color: var(--bg);
   line-height: 1.5;
   font-weight: 400;
@@ -30,16 +35,18 @@
 
 body {
   background-color: var(--bg);
-  color: var(--ink);
+  color: var(--text);
   min-height: 100vh;
   margin: 0;
+  overflow-x: hidden;
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: Georgia, serif;
+  font-family: 'Inter Variable', sans-serif;
   font-weight: 600;
-  color: var(--ink);
+  color: var(--text);
   line-height: 1.25;
+  letter-spacing: -0.015em;
 }
 
 button {
@@ -47,12 +54,15 @@ button {
   cursor: pointer;
   border: none;
   outline: none;
-  transition: all 0.15s ease-in-out;
+  transition: all 200ms ease;
 }
 
 select, input {
   font-family: inherit;
-  color: var(--ink);
+  color: var(--text);
+  background-color: var(--surface-2);
+  border: 1px solid var(--border);
+  transition: all 200ms ease;
 }
 
 /* Card utility */
@@ -60,22 +70,69 @@ select, input {
   background: var(--card-bg);
   border: var(--card-border);
   border-radius: var(--card-radius);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.4);
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+
+/* Tabular numbers for all financial figures */
+.tabular-nums, .money-val, .account-held {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Action Badges */
 .badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 3px 8px;
-  border-radius: 10px;
-  font-size: 0.75rem;
+  border-radius: 6px;
+  font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
   color: #FFFFFF;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.04em;
+  line-height: 1;
 }
 
-.badge-none { background-color: var(--badge-none); }
-.badge-lien { background-color: var(--badge-lien); }
-.badge-lien_cap { background-color: var(--badge-lien-cap); }
-.badge-timed_hold { background-color: var(--badge-hold); }
+.badge-none {
+  background-color: rgba(71, 85, 105, 0.35);
+  color: #94A3B8;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.badge-lien {
+  background-color: rgba(59, 130, 246, 0.25);
+  color: #93C5FD;
+  border: 1px solid rgba(59, 130, 246, 0.4);
+}
+
+.badge-lien_cap {
+  background-color: rgba(245, 158, 11, 0.25);
+  color: #FCD34D;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.badge-timed_hold {
+  background-color: rgba(244, 63, 94, 0.25);
+  color: #FDA4AF;
+  border: 1px solid rgba(244, 63, 94, 0.4);
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334460;
+}

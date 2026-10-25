@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
+import { Download, AlertTriangle, AlertCircle, Info, CheckCircle2 } from 'lucide-react';
 import TracingPanel from './TracingPanel';
 import PriorityPanel from './PriorityPanel';
 import HarmPanel from './HarmPanel';
 import ComparisonPanel from './ComparisonPanel';
 import HolderExplanation from './HolderExplanation';
 import HoldClock from './HoldClock';
+import { formatMoney, formatMoneyExact } from '../utils/format';
 
 /**
- * AccountCard: Displays comprehensive account details, tracing, priority,
- * harm assessment, policy comparison, evidence what-if workflow, hold clock,
- * and allows downloading plain-text decision records.
- * NOTE: Never display is_mule or role.
+ * AccountCard: Full-width detail section for selected account.
+ * Header strip with metadata & download button.
+ * 3-column grid: Tracing | Priority | Harm & Comparison.
+ * 2-column row: Holder explanation (or special state) | Hold clock.
+ * NOTE: Never display is_mule or role. Never use the word "Statutory".
  */
 export default function AccountCard({
   accountId,
@@ -148,7 +151,7 @@ export default function AccountCard({
       `Decision Note:   ${note}`,
       '',
       '------------------------------------------------------------------------',
-      '5. STATUTORY HOLD CLOCK',
+      '5. HOLD CLOCK (DRAFT RBI TIMELINE)',
       '------------------------------------------------------------------------',
       clockDatesText,
       '',
@@ -175,28 +178,43 @@ export default function AccountCard({
 
   if (!accountId) {
     return (
-      <div className="card placeholder-card">
-        <h4 style={{ fontSize: '1.05rem', color: 'var(--ink)' }}>Account Details</h4>
-        <p style={{ fontSize: '0.85rem', color: 'var(--muted)', marginTop: '8px' }}>
-          Select an account from the graph or review list to inspect details.
+      <div className="card empty-account-card">
+        <Info size={28} className="text-muted" />
+        <h4 style={{ fontSize: '1.05rem', color: 'var(--text)' }}>No Account Selected</h4>
+        <p style={{ fontSize: '0.85rem', color: 'var(--muted)', marginTop: '4px' }}>
+          Select an account from the money-flow graph or review list above to view full forensic details.
         </p>
       </div>
     );
   }
 
+  // Skeleton Loader for Account Card
   if (loading && !data) {
     return (
       <div className="card account-card-loading">
-        <div className="spinner" />
-        <p>Loading account details for <code>{accountId}</code>...</p>
+        <div className="skeleton-header">
+          <div className="skeleton-line skeleton-title" />
+          <div className="skeleton-line skeleton-badge" />
+        </div>
+        <div className="skeleton-grid-3">
+          <div className="skeleton-box" />
+          <div className="skeleton-box" />
+          <div className="skeleton-box" />
+        </div>
+        <div className="skeleton-grid-2">
+          <div className="skeleton-box" />
+          <div className="skeleton-box" />
+        </div>
       </div>
     );
   }
 
+  // Friendly error card for API errors
   if (error && !data) {
     return (
       <div className="card account-card-error">
-        <h5>Failed to load account</h5>
+        <AlertCircle size={32} className="text-red" />
+        <h5>Unable to Load Account Details</h5>
         <p>{error}</p>
         <button
           className="retry-btn"
@@ -205,7 +223,7 @@ export default function AccountCard({
             setError(null);
           }}
         >
-          Retry
+          Try Again
         </button>
       </div>
     );
@@ -240,15 +258,24 @@ export default function AccountCard({
   const action = decision.action || 'none';
   const needsHuman = Boolean(decision.needs_human);
   const note = decision.note || 'No note available.';
+  const isExit = type === 'exit';
+  const isNoneAction = action === 'none';
 
   return (
-    <div className="card account-card-container">
-      {/* 1. Header */}
-      <header className="account-card-header">
-        <div className="header-top-row">
+    <section className="account-detail-section">
+      {/* 1. Header Strip */}
+      <header className="card account-detail-header-strip">
+        <div className="header-strip-left">
           <div className="account-title-group">
             <h3 className="account-card-id">{accountId}</h3>
             <span className="account-card-type">{type}</span>
+          </div>
+
+          <div className="header-balance-wrap">
+            <span className="balance-label">Balance:</span>
+            <span className="balance-value tabular-nums" title={formatMoneyExact(balance)}>
+              {formatMoney(balance)}
+            </span>
           </div>
 
           <div className="header-badges">
@@ -257,82 +284,120 @@ export default function AccountCard({
             </span>
             {needsHuman && (
               <span className="badge-human-approval" title="Decision requires human review and confirmation">
-                ⚠️ Human approval required
+                <AlertTriangle size={12} />
+                Human approval required
               </span>
             )}
           </div>
         </div>
 
-        <div className="header-balance-row">
-          <span className="balance-label">Total Balance:</span>
-          <span className="balance-value">
-            ₹{Number(balance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
+        <div className="header-strip-right">
+          <button
+            type="button"
+            className="download-record-btn-header"
+            onClick={handleDownloadRecord}
+            title="Download plain-text decision record"
+          >
+            <Download size={14} />
+            <span>Download decision record</span>
+          </button>
         </div>
-
-        {note && (
-          <div className="decision-note-box">
-            <span className="note-icon">📝</span>
-            <span className="note-text">{note}</span>
-          </div>
-        )}
       </header>
 
-      {/* 2. Tracing Breakdown Panel */}
-      <TracingPanel
-        balance={balance}
-        taintedProp={tainted_prop}
-        taintedFifo={tainted_fifo}
-        taintedLibr={tainted_libr}
-        taintedMin={tainted_min}
-        taintedMax={tainted_max}
-      />
+      {/* Decision Note Callout */}
+      {note && (
+        <div className="decision-note-box">
+          <Info size={14} className="note-icon text-teal" />
+          <span className="note-text">{note}</span>
+        </div>
+      )}
 
-      {/* 3. Priority Panel */}
-      <PriorityPanel
-        S={S}
-        B={B}
-        T={T}
-        H={H}
-        reasonsFor={reasons_for}
-        reasonsAgainst={reasons_against}
-      />
+      {/* Special Exit Account Banner */}
+      {isExit && (
+        <div className="exit-account-banner">
+          <AlertCircle size={16} className="text-amber" />
+          <span>Exit point: money leaves the banking trail here. Recorded as a lead for investigators.</span>
+        </div>
+      )}
 
-      {/* 4. Harm Model Panel */}
-      <HarmPanel
-        harmScore={harm_score}
-        coverDays={cover_days}
-        floatNeed={float_need}
-        salaryDependence={salary_dependence}
-        thinCover={thin_cover}
-      />
+      {/* 3-Column Grid: Tracing | Investigation Priority | Harm & Comparison */}
+      <div className="detail-grid-3">
+        {/* Column 1: Tracing */}
+        <div className="grid-col">
+          <TracingPanel
+            balance={balance}
+            taintedProp={tainted_prop}
+            taintedFifo={tainted_fifo}
+            taintedLibr={tainted_libr}
+            taintedMin={tainted_min}
+            taintedMax={tainted_max}
+          />
+        </div>
 
-      {/* 5. Policy Comparison Panel */}
-      <ComparisonPanel blanket={blanket} smart={smart} />
+        {/* Column 2: Investigation Priority */}
+        <div className="grid-col">
+          <PriorityPanel
+            S={S}
+            B={B}
+            T={T}
+            H={H}
+            reasonsFor={reasons_for}
+            reasonsAgainst={reasons_against}
+          />
+        </div>
 
-      {/* 6. Holder Explanation & Evidence */}
-      <HolderExplanation
-        accountId={accountId}
-        scamId={scamId}
-        delay={delay}
-        lam={lam}
-        auditLog={auditLog}
-        onApproveRelease={onApproveRelease}
-      />
-
-      {/* 7. Hold Clock */}
-      <HoldClock onClockUpdate={setClockInfo} />
-
-      {/* 8. Download Decision Record Button */}
-      <div className="download-record-area">
-        <button
-          type="button"
-          className="download-record-btn"
-          onClick={handleDownloadRecord}
-        >
-          ⬇ Download decision record (.txt)
-        </button>
+        {/* Column 3: Harm and Blanket-vs-Smart Comparison */}
+        <div className="grid-col harm-comp-col">
+          <HarmPanel
+            harmScore={harm_score}
+            coverDays={cover_days}
+            floatNeed={float_need}
+            salaryDependence={salary_dependence}
+            thinCover={thin_cover}
+          />
+          <ComparisonPanel blanket={blanket} smart={smart} />
+        </div>
       </div>
-    </div>
+
+      {/* 2-Column Row: Holder Explanation (or None State) | Hold Clock */}
+      <div className="detail-grid-2">
+        {/* Column 1: Evidence / Clear-me Workflow OR "No action recommended" */}
+        <div className="grid-col">
+          {isNoneAction ? (
+            <div className="card-panel no-action-panel">
+              <div className="panel-header">
+                <div className="panel-title-group">
+                  <CheckCircle2 size={16} className="panel-icon text-teal" />
+                  <h5 className="panel-title">Holder Explanation</h5>
+                </div>
+                <span className="badge badge-none">none</span>
+              </div>
+              <div className="no-action-content">
+                <CheckCircle2 size={24} className="text-teal" />
+                <h6>No action recommended</h6>
+                <p>
+                  This account has minimal or zero actionable taint under the selected λ trade-off.
+                  No lien or freeze is advised, so no evidence verification or release is required.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <HolderExplanation
+              accountId={accountId}
+              scamId={scamId}
+              delay={delay}
+              lam={lam}
+              auditLog={auditLog}
+              onApproveRelease={onApproveRelease}
+            />
+          )}
+        </div>
+
+        {/* Column 2: Hold Clock */}
+        <div className="grid-col">
+          <HoldClock onClockUpdate={setClockInfo} />
+        </div>
+      </div>
+    </section>
   );
 }

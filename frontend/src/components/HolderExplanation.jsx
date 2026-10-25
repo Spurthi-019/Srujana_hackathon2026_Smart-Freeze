@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { FileCheck, ArrowRight, Check, History } from 'lucide-react';
+import { formatMoney, formatMoneyExact } from '../utils/format';
 
 const EVIDENCE_OPTIONS = [
   'Invoice or receipt for the payment',
@@ -112,8 +114,13 @@ export default function HolderExplanation({
   return (
     <div className="card-panel holder-explanation-panel">
       <div className="panel-header">
-        <h5 className="panel-title">Holder Explanation & Evidence</h5>
-        <span className="panel-subbadge">{evidenceCount} of 4 items verified</span>
+        <div className="panel-title-group">
+          <FileCheck size={16} className="panel-icon text-teal" />
+          <h5 className="panel-title">Holder Explanation & Evidence</h5>
+        </div>
+        <span className="panel-subbadge tabular-nums">
+          {evidenceCount} of 4 items verified
+        </span>
       </div>
 
       {/* Checkbox Options */}
@@ -141,7 +148,7 @@ export default function HolderExplanation({
             <span className="whatif-title">Before Evidence</span>
             <div className="whatif-row">
               <span className="whatif-label">Priority (S):</span>
-              <span className="whatif-val">
+              <span className="whatif-val tabular-nums">
                 {before ? Number(before.S).toFixed(3) : '—'}
               </span>
             </div>
@@ -153,20 +160,22 @@ export default function HolderExplanation({
             </div>
             <div className="whatif-row">
               <span className="whatif-label">Held:</span>
-              <span className="whatif-val">
-                ₹{before ? Math.round(before.held).toLocaleString('en-IN') : 0}
+              <span className="whatif-val tabular-nums" title={before ? formatMoneyExact(before.held) : '₹0'}>
+                {before ? formatMoney(before.held) : '₹0'}
               </span>
             </div>
           </div>
 
-          <div className="whatif-arrow">→</div>
+          <div className="whatif-arrow">
+            <ArrowRight size={18} className="text-muted" />
+          </div>
 
           {/* After */}
           <div className="whatif-box after-box">
             <span className="whatif-title">After Evidence</span>
             <div className="whatif-row">
               <span className="whatif-label">Priority (S):</span>
-              <span className="whatif-val whatif-val-improved">
+              <span className="whatif-val whatif-val-improved tabular-nums">
                 {after ? Number(after.S).toFixed(3) : '—'}
               </span>
             </div>
@@ -178,8 +187,8 @@ export default function HolderExplanation({
             </div>
             <div className="whatif-row">
               <span className="whatif-label">Held:</span>
-              <span className="whatif-val whatif-val-improved">
-                ₹{after ? Math.round(after.held).toLocaleString('en-IN') : 0}
+              <span className="whatif-val whatif-val-improved tabular-nums" title={after ? formatMoneyExact(after.held) : '₹0'}>
+                {after ? formatMoney(after.held) : '₹0'}
               </span>
             </div>
           </div>
@@ -195,7 +204,13 @@ export default function HolderExplanation({
             onClick={handleApprove}
             disabled={justApproved}
           >
-            {justApproved ? '✓ Release Approved' : 'Approve release'}
+            {justApproved ? (
+              <>
+                <Check size={14} /> Release Approved
+              </>
+            ) : (
+              'Approve release'
+            )}
           </button>
           {justApproved && (
             <span className="release-approved-msg">
@@ -211,7 +226,10 @@ export default function HolderExplanation({
 
       {/* Audit Log Table */}
       <div className="audit-log-section">
-        <h6 className="audit-log-title">Audit log (this session)</h6>
+        <div className="audit-log-header-row">
+          <History size={13} className="text-muted" />
+          <h6 className="audit-log-title">Audit log (this session)</h6>
+        </div>
         {auditLog.length === 0 ? (
           <div className="audit-log-empty">No approvals recorded yet in this session.</div>
         ) : (
@@ -230,17 +248,17 @@ export default function HolderExplanation({
               <tbody>
                 {auditLog.map((entry, i) => (
                   <tr key={i} className={entry.account === accountId ? 'current-account-entry' : ''}>
-                    <td>{entry.time}</td>
+                    <td className="tabular-nums">{entry.time}</td>
                     <td><code>{entry.account}</code></td>
                     <td>{entry.scam}</td>
                     <td>{entry.evidence} items</td>
                     <td>
-                      <span className={`badge-mini badge-${entry['old action']}`}>
+                      <span className={`badge badge-${entry['old action']}`}>
                         {entry['old action']}
                       </span>
                     </td>
                     <td>
-                      <span className={`badge-mini badge-${entry['new action']}`}>
+                      <span className={`badge badge-${entry['new action']}`}>
                         {entry['new action']}
                       </span>
                     </td>

@@ -1,4 +1,5 @@
 import React from 'react';
+import { Activity, ShieldAlert, CheckCircle2 } from 'lucide-react';
 
 /**
  * PriorityPanel: Diverging bars for B, T, H (positive right, negative left),
@@ -24,8 +25,11 @@ export default function PriorityPanel({
   return (
     <div className="card-panel priority-panel">
       <div className="panel-header">
-        <h5 className="panel-title">Investigation Priority (S)</h5>
-        <span className="priority-score-badge">
+        <div className="panel-title-group">
+          <Activity size={16} className="panel-icon text-amber" />
+          <h5 className="panel-title">Investigation Priority (S)</h5>
+        </div>
+        <span className="priority-score-badge tabular-nums">
           S = {Number(S).toFixed(3)}
         </span>
       </div>
@@ -40,7 +44,7 @@ export default function PriorityPanel({
         </div>
         <div className="priority-labels">
           <span>0.0 (Low)</span>
-          <span>Investigation priority: {(S * 100).toFixed(1)}%</span>
+          <span className="tabular-nums">Investigation priority: {(S * 100).toFixed(1)}%</span>
           <span>1.0 (High)</span>
         </div>
       </div>
@@ -51,8 +55,8 @@ export default function PriorityPanel({
       {/* Diverging Bars for B, T, H */}
       <div className="diverging-factors">
         <div className="diverging-header">
-          <span>← Reduces priority (Innocent signs)</span>
-          <span>Increases priority (Risk signs) →</span>
+          <span>← Reduces priority (Innocent)</span>
+          <span>Increases priority (Risk) →</span>
         </div>
         {factors.map((factor) => {
           const val = factor.val;
@@ -64,7 +68,7 @@ export default function PriorityPanel({
               <div className="factor-meta">
                 <span className="factor-code">{factor.label}</span>
                 <span className="factor-desc">{factor.name}</span>
-                <span className="factor-num">
+                <span className="factor-num tabular-nums">
                   {isPos ? `+${val.toFixed(2)}` : val.toFixed(2)}
                 </span>
               </div>
@@ -89,8 +93,11 @@ export default function PriorityPanel({
 
       {/* Explanatory Reasons */}
       <div className="reasons-container">
-        <div className="reasons-block">
-          <h6 className="reasons-title reasons-for-title">Why mule-like</h6>
+        <div className="reasons-block reasons-block-risk">
+          <div className="reasons-title-row">
+            <ShieldAlert size={13} className="text-red" />
+            <h6 className="reasons-title reasons-for-title">Why mule-like</h6>
+          </div>
           {reasonsFor && reasonsFor.length > 0 ? (
             <ul className="reasons-list reasons-for-list">
               {reasonsFor.map((r, idx) => (
@@ -102,8 +109,11 @@ export default function PriorityPanel({
           )}
         </div>
 
-        <div className="reasons-block">
-          <h6 className="reasons-title reasons-against-title">Why this might be innocent</h6>
+        <div className="reasons-block reasons-block-innocent">
+          <div className="reasons-title-row">
+            <CheckCircle2 size={13} className="text-teal" />
+            <h6 className="reasons-title reasons-against-title">Why this might be innocent</h6>
+          </div>
           {reasonsAgainst && reasonsAgainst.length > 0 ? (
             <ul className="reasons-list reasons-against-list">
               {reasonsAgainst.map((r, idx) => (

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Clock } from 'lucide-react';
 
 /**
  * HoldClock: SVG timeline from Day 0 to Day 60 with RBI draft direction markers:
@@ -6,6 +7,7 @@ import React, { useState } from 'react';
  * - Day 20: explanation deadline
  * - Decision due: Day 30 (or explanation day + 10)
  * - Day 60: maximum hold unless police instruct otherwise
+ * NOTE: Never use the word "Statutory".
  */
 export default function HoldClock({ onClockUpdate }) {
   const [explanationDayInput, setExplanationDayInput] = useState('');
@@ -41,7 +43,10 @@ export default function HoldClock({ onClockUpdate }) {
   return (
     <div className="card-panel hold-clock-panel">
       <div className="panel-header">
-        <h5 className="panel-title">Hold Clock (Statutory Timeline)</h5>
+        <div className="panel-title-group">
+          <Clock size={16} className="panel-icon text-amber" />
+          <h5 className="panel-title">Hold clock (draft RBI timeline)</h5>
+        </div>
         <span className="panel-subbadge">Draft RBI Directions</span>
       </div>
 
@@ -69,7 +74,7 @@ export default function HoldClock({ onClockUpdate }) {
                 }
               }
             }}
-            className="clock-number-input"
+            className="clock-number-input tabular-nums"
           />
           {explanationDayInput !== '' && (
             <button
@@ -112,7 +117,7 @@ export default function HoldClock({ onClockUpdate }) {
             y1={getY}
             x2={xOrigin + xTotal}
             y2={getY}
-            stroke="#CBD5E1"
+            stroke="#1E293B"
             strokeWidth="5"
             strokeLinecap="round"
           />
@@ -138,14 +143,14 @@ export default function HoldClock({ onClockUpdate }) {
                 y1={getY - 4}
                 x2={tx}
                 y2={getY + 4}
-                stroke="#94A3B8"
+                stroke="#334155"
                 strokeWidth="1.5"
               />
             );
           })}
 
           {/* Marker 1: Day 0 */}
-          <circle cx={x0} cy={getY} r="6" fill="#3B82F6" stroke="#FFFFFF" strokeWidth="2" />
+          <circle cx={x0} cy={getY} r="6" fill="#60A5FA" stroke="#121B2E" strokeWidth="2" />
           <text x={x0} y={getY - 14} textAnchor="start" className="clock-svg-day">
             Day 0
           </text>
@@ -154,7 +159,7 @@ export default function HoldClock({ onClockUpdate }) {
           </text>
 
           {/* Marker 2: Day 20 */}
-          <circle cx={x20} cy={getY} r="6" fill="#D97706" stroke="#FFFFFF" strokeWidth="2" />
+          <circle cx={x20} cy={getY} r="6" fill="#F59E0B" stroke="#121B2E" strokeWidth="2" />
           <text x={x20} y={getY - 14} textAnchor="middle" className="clock-svg-day">
             Day 20
           </text>
@@ -168,19 +173,19 @@ export default function HoldClock({ onClockUpdate }) {
               cx={xDecision}
               cy={getY}
               r="8"
-              fill="#0F766E"
-              stroke="#FFFFFF"
+              fill="#2DD4BF"
+              stroke="#121B2E"
               strokeWidth="2.5"
             />
             {/* Pulsing visual halo */}
             <circle
               cx={xDecision}
               cy={getY}
-              r="12"
+              r="13"
               fill="none"
-              stroke="#0F766E"
+              stroke="#2DD4BF"
               strokeWidth="1.5"
-              opacity="0.4"
+              opacity="0.35"
             />
             <text
               x={xDecision}
@@ -201,7 +206,7 @@ export default function HoldClock({ onClockUpdate }) {
           </g>
 
           {/* Marker 4: Day 60 */}
-          <circle cx={x60} cy={getY} r="6" fill="#DC2626" stroke="#FFFFFF" strokeWidth="2" />
+          <circle cx={x60} cy={getY} r="6" fill="#F43F5E" stroke="#121B2E" strokeWidth="2" />
           <text x={x60} y={getY - 14} textAnchor="end" className="clock-svg-day">
             Day 60
           </text>

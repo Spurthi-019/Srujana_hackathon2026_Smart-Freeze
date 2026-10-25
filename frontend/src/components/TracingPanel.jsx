@@ -1,9 +1,11 @@
 import React from 'react';
+import { GitFork } from 'lucide-react';
+import { formatMoney, formatMoneyExact } from '../utils/format';
 
 /**
- * TracingPanel: Displays three horizontal bars (Proportional, FIFO, LIBR)
- * of tainted amount against the balance as the full-width reference,
- * with tainted_min as the "sure part" (teal) and tainted_min..tainted_max as the "maybe band" (amber, lighter).
+ * TracingPanel: Three horizontal bars (Proportional, FIFO, LIBR)
+ * of tainted amount against the balance as the full-width reference.
+ * Sure part (teal #2DD4BF) and maybe band (amber #F59E0B).
  */
 export default function TracingPanel({
   balance = 0,
@@ -24,9 +26,15 @@ export default function TracingPanel({
   return (
     <div className="card-panel tracing-panel">
       <div className="panel-header">
-        <h5 className="panel-title">Tracing Breakdown</h5>
-        <span className="panel-badge-range">
-          Range: ₹{Math.round(taintedMin).toLocaleString('en-IN')} – ₹{Math.round(taintedMax).toLocaleString('en-IN')}
+        <div className="panel-title-group">
+          <GitFork size={16} className="panel-icon text-teal" />
+          <h5 className="panel-title">Tracing Breakdown</h5>
+        </div>
+        <span
+          className="panel-badge-range tabular-nums"
+          title={`Min: ${formatMoneyExact(taintedMin)} | Max: ${formatMoneyExact(taintedMax)}`}
+        >
+          {formatMoney(taintedMin)} – {formatMoney(taintedMax)}
         </span>
       </div>
 
@@ -43,23 +51,27 @@ export default function TracingPanel({
             <div key={m.key} className="tracing-bar-group">
               <div className="tracing-bar-label">
                 <span className="method-name">{m.name}</span>
-                <span className="method-amount">
-                  ₹{Math.round(m.amount).toLocaleString('en-IN')}{' '}
+                <span
+                  className="method-amount tabular-nums"
+                  title={`${m.name}: ${formatMoneyExact(m.amount)} of balance ${formatMoneyExact(balance)}`}
+                >
+                  {formatMoney(m.amount)}{' '}
                   <span className="method-pct">
                     ({((m.amount / (balance || 1)) * 100).toFixed(0)}%)
                   </span>
                 </span>
               </div>
-              <div className="bar-track" title={`${m.name}: ₹${m.amount.toFixed(0)} of ₹${balance.toFixed(0)}`}>
+              <div
+                className="bar-track"
+                title={`${m.name}: ${formatMoneyExact(m.amount)} (Sure: ${formatMoneyExact(surePart)}, Maybe: ${formatMoneyExact(maybePart)})`}
+              >
                 <div
                   className="bar-fill bar-sure"
                   style={{ width: `${surePct}%` }}
-                  title={`Sure part: ₹${surePart.toFixed(0)}`}
                 />
                 <div
                   className="bar-fill bar-maybe"
                   style={{ width: `${maybePct}%` }}
-                  title={`Maybe band: ₹${maybePart.toFixed(0)}`}
                 />
               </div>
             </div>
@@ -72,13 +84,19 @@ export default function TracingPanel({
         <div className="legend-item">
           <span className="legend-dot dot-sure" />
           <span className="legend-text">
-            Sure part (min): <strong>₹{Math.round(taintedMin).toLocaleString('en-IN')}</strong>
+            Sure part (min):{' '}
+            <strong className="tabular-nums" title={formatMoneyExact(taintedMin)}>
+              {formatMoney(taintedMin)}
+            </strong>
           </span>
         </div>
         <div className="legend-item">
           <span className="legend-dot dot-maybe" />
           <span className="legend-text">
-            Maybe band: <strong>₹{Math.round(taintedMin).toLocaleString('en-IN')} – ₹{Math.round(taintedMax).toLocaleString('en-IN')}</strong>
+            Maybe band:{' '}
+            <strong className="tabular-nums" title={`${formatMoneyExact(taintedMin)} to ${formatMoneyExact(taintedMax)}`}>
+              {formatMoney(taintedMin)} – {formatMoney(taintedMax)}
+            </strong>
           </span>
         </div>
       </div>
