@@ -15,7 +15,12 @@ MODEL = None
 SCALER = None
 
 
-def score_all(accounts: pd.DataFrame, txns: pd.DataFrame, seed: int = 42) -> pd.DataFrame:
+def score_all(
+    accounts: pd.DataFrame,
+    txns: pd.DataFrame,
+    seed: int = 42,
+    as_of: float | None = None,
+) -> pd.DataFrame:
     """
     Computes investigation priority S and group contributions B, T, H.
     Uses out-of-fold predictions from StratifiedKFold cross-validation.
@@ -24,8 +29,12 @@ def score_all(accounts: pd.DataFrame, txns: pd.DataFrame, seed: int = 42) -> pd.
     """
     global MODEL, SCALER
 
+    # Filter txns to time <= as_of first
+    if as_of is not None:
+        txns = txns[txns["time"] <= as_of]
+
     # 1. Build features
-    features_df = build_features(accounts, txns)
+    features_df = build_features(accounts, txns, as_of=as_of)
     feature_names = features_df.columns.tolist()
 
     # Align with target label is_mule

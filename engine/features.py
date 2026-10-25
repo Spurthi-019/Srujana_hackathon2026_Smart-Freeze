@@ -64,15 +64,28 @@ READABLE = {
 }
 
 
-def build_features(accounts: pd.DataFrame, txns: pd.DataFrame) -> pd.DataFrame:
+def build_features(
+    accounts: pd.DataFrame,
+    txns: pd.DataFrame,
+    as_of: float | None = None,
+) -> pd.DataFrame:
     """
     Builds B, T, H features for non-victim, non-exit accounts.
+    If as_of is provided, uses only transactions with time <= as_of, and adapts
+    time windows by W = max(as_of, 1440).
     Returns DataFrame indexed by account_id.
     """
     # Exclude victim and exit accounts
     target_accounts = accounts[~accounts["type"].isin(["victim", "exit"])].copy()
     target_ids = target_accounts["account_id"].tolist()
     target_id_set = set(target_ids)
+
+    # Filter txns to time <= as_of first
+    if as_of is not None:
+        txns = txns[txns["time"] <= as_of]
+        W = max(float(as_of), 1440.0)
+    else:
+        W = 43200.0
 
     # Clean scam_id: treat NaN, float, and "" as blank
     txns_clean = txns.copy()
@@ -125,7 +138,7 @@ def build_features(accounts: pd.DataFrame, txns: pd.DataFrame) -> pd.DataFrame:
     tainted_holding_share_map = {aid: 0.0 for aid in target_ids}
 
     for sid in unique_scam_ids:
-        trace_df = trace(accounts, sorted_txns, sid)
+        trace_df = trace(accounts, sorted_txns, sid, as_of=as_of)
         for _, r in trace_df.iterrows():
             aid = r["account_id"]
             if aid in target_id_set:
@@ -134,6 +147,7 @@ def build_features(accounts: pd.DataFrame, txns: pd.DataFrame) -> pd.DataFrame:
                 share = (t_max / bal) if bal > 0 else 0.0
                 if share > tainted_holding_share_map[aid]:
                     tainted_holding_share_map[aid] = share
+
 
     # Compute features row by row
     records = []
@@ -173,7 +187,7 @@ def build_features(accounts: pd.DataFrame, txns: pd.DataFrame) -> pd.DataFrame:
         distinct_senders = float(np.log1p(len(senders)))
 
         # B: burst_ratio: max inflow in any 3-day window / (avg_monthly_inflow/10 + 1), capped at 50, use log1p
-        # 3-day window = 3 * 1440 = 4320 minutes
+        # burst windows: 3-day window = 3 * 1440 = 4320 minutes (or min(W, 4320)), denominator scaled to window W
         if len(in_list) > 0:
             in_times = [t for t, _, _, _ in in_list]
             in_amts = [amt for _, amt, _, _ in in_list]
@@ -212,19 +226,20 @@ def build_features(accounts: pd.DataFrame, txns: pd.DataFrame) -> pd.DataFrame:
         # H: age_log: log1p(age_days)
         age_log = float(np.log1p(age_days))
 
-        # H: active_days_share: share of the 30 days with at least one txn involving the account
+        # H: active_days_share: share of active days over window length W
+        n_days = max(1, int(np.ceil(W / 1440.0)))
         active_days = set()
         for t, _, _, _ in in_list:
-            active_days.add(min(29, t // 1440))
+            active_days.add(min(n_days - 1, int(t // 1440)))
         for t, _, _, _ in out_list:
-            active_days.add(min(29, t // 1440))
-        active_days_share = len(active_days) / 30.0
+            active_days.add(min(n_days - 1, int(t // 1440)))
+        active_days_share = len(active_days) / float(n_days)
 
-        # H: regular_inflow_share: share of 4 equal time windows (each 10800 minutes) in which the account receives at least one inflow
-        # windows: [0..10800), [10800..21600), [21600..32400), [32400..43200]
+        # H: regular_inflow_share: share of 4 equal time windows (each W/4 minutes) in which the account receives at least one inflow
+        win_len = W / 4.0
         inflow_windows = set()
         for t, _, _, _ in in_list:
-            win_idx = min(3, t // 10800)
+            win_idx = min(3, int(t // win_len))
             inflow_windows.add(win_idx)
         regular_inflow_share = len(inflow_windows) / 4.0
 

@@ -139,3 +139,20 @@ def test_nonexistent_scam(reference_data):
 
     # Balances should still reflect transactions
     assert df["balance"].sum() == pytest.approx(accounts["opening_balance"].sum(), abs=0.01)
+
+
+def test_trace_as_of(reference_data):
+    """Test 4: trace with as_of=None equals as_of=43200 (identical); with as_of=2 equals txns[time <= 2]."""
+    accounts, txns = reference_data
+
+    # as_of=None equals as_of=43200
+    df_none = trace(accounts, txns, "S01", as_of=None)
+    df_43200 = trace(accounts, txns, "S01", as_of=43200)
+    pd.testing.assert_frame_equal(df_none, df_43200)
+
+    # as_of=2 equals txns[time <= 2] with as_of=2
+    txns_2 = txns[txns["time"] <= 2]
+    df_asof_2 = trace(accounts, txns, "S01", as_of=2)
+    df_filt_2 = trace(accounts, txns_2, "S01", as_of=2)
+    pd.testing.assert_frame_equal(df_asof_2, df_filt_2)
+

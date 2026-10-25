@@ -123,3 +123,32 @@ def test_scam_inflow_share_by_role(sim_data):
 
     assert mean_normal_scam_inflow < 0.05, f"Normal scam_inflow_share too high: {mean_normal_scam_inflow:.4f}"
     assert mean_mule_scam_inflow > 0.50, f"Mule scam_inflow_share too low: {mean_mule_scam_inflow:.4f}"
+
+
+def test_as_of_consistency(sim_data):
+    """
+    as_of=None equals as_of=43200 for features/scores (within 1e-9);
+    with as_of=5000, results equal those from txns[time <= 5000] with as_of=5000.
+    """
+    accounts, txns, _, _, _ = sim_data
+
+    # as_of=None vs as_of=43200
+    f_none = build_features(accounts, txns, as_of=None)
+    f_43200 = build_features(accounts, txns, as_of=43200)
+    assert np.allclose(f_none.values, f_43200.values, atol=1e-9)
+
+    s_none = score_all(accounts, txns, seed=42, as_of=None)
+    s_43200 = score_all(accounts, txns, seed=42, as_of=43200)
+    assert np.allclose(s_none["S"].values, s_43200["S"].values, atol=1e-9)
+
+    # with as_of=5000 equals txns[time <= 5000] with as_of=5000
+    txns_5000 = txns[txns["time"] <= 5000]
+
+    f_asof_5000 = build_features(accounts, txns, as_of=5000)
+    f_filt_5000 = build_features(accounts, txns_5000, as_of=5000)
+    assert np.allclose(f_asof_5000.values, f_filt_5000.values, atol=1e-9)
+
+    s_asof_5000 = score_all(accounts, txns, seed=42, as_of=5000)
+    s_filt_5000 = score_all(accounts, txns_5000, seed=42, as_of=5000)
+    assert np.allclose(s_asof_5000["S"].values, s_filt_5000["S"].values, atol=1e-9)
+

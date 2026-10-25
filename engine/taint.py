@@ -9,12 +9,21 @@ from collections import deque
 import pandas as pd
 
 
-def trace(accounts: pd.DataFrame, txns: pd.DataFrame, scam_id: str) -> pd.DataFrame:
+def trace(
+    accounts: pd.DataFrame,
+    txns: pd.DataFrame,
+    scam_id: str,
+    as_of: float | None = None,
+) -> pd.DataFrame:
     """
     Traces stolen money from a scam across accounts under Proportional, FIFO, and LIBR.
+    If as_of is provided, uses only transactions with time <= as_of.
     Returns DataFrame with columns:
     [account_id, balance, tainted_prop, tainted_fifo, tainted_libr, tainted_min, tainted_max]
     """
+    if as_of is not None:
+        txns = txns[txns["time"] <= as_of]
+
     account_ids = accounts["account_id"].tolist()
     victim_set = set(accounts.loc[accounts["type"] == "victim", "account_id"])
     opening_balances = dict(zip(accounts["account_id"], accounts["opening_balance"].astype(float)))
