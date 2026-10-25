@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import FlowGraph from './components/FlowGraph';
+import AccountCard from './components/AccountCard';
 import './App.css';
 
 export default function App() {
@@ -10,6 +11,7 @@ export default function App() {
   const [graphData, setGraphData] = useState(null);
   const [decisions, setDecisions] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState(null);
+  const [auditLog, setAuditLog] = useState([]);
 
   const [loadingScams, setLoadingScams] = useState(true);
   const [loadingData, setLoadingData] = useState(false);
@@ -250,42 +252,15 @@ export default function App() {
             )}
           </div>
 
-          {/* Account Card Placeholder */}
-          <div className="card placeholder-card">
-            <h4 style={{ fontSize: '1.05rem', color: 'var(--ink)' }}>Account Details</h4>
-            {selectedDecision ? (
-              <div>
-                <p style={{ fontWeight: 600, fontSize: '0.95rem' }}>
-                  Account: <code>{selectedDecision.account_id}</code> ({selectedDecision.type})
-                </p>
-                <p style={{ fontSize: '0.82rem', color: 'var(--muted)', marginTop: '4px' }}>
-                  Balance: ₹{Number(selectedDecision.balance || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
-                </p>
-                <div style={{ marginTop: '10px' }}>
-                  <span className={`badge badge-${selectedDecision.action}`}>
-                    {selectedDecision.action}
-                  </span>
-                </div>
-                <div
-                  style={{
-                    marginTop: '16px',
-                    padding: '12px',
-                    borderRadius: '8px',
-                    background: '#F6F4EF',
-                    fontSize: '0.8rem',
-                    color: 'var(--muted)',
-                    border: '1px dashed #D9D5CB',
-                  }}
-                >
-                  ℹ️ Full Account Card (tracing breakdown, priority score details, harm assessment, and clear-me flow) comes in the next step.
-                </div>
-              </div>
-            ) : (
-              <p style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
-                Click an account from the graph or review list above to inspect.
-              </p>
-            )}
-          </div>
+          {/* Account Card */}
+          <AccountCard
+            accountId={selectedAccountId}
+            scamId={selectedScam}
+            delay={delay}
+            lam={lam}
+            auditLog={auditLog}
+            onApproveRelease={(entry) => setAuditLog((prev) => [entry, ...prev])}
+          />
         </aside>
       </main>
     </div>
