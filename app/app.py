@@ -314,11 +314,221 @@ def render_comparison_panel(
     return smart_held, smart_clean
 
 
+def find_nearest_lambda_row(sf_df: pd.DataFrame, target_lam: float) -> pd.Series:
+    """Find the smart freeze row whose lam is nearest in log space (lam 0 counts as smallest)."""
+    lams = sf_df["lam"].astype(float).values
+    pos_lams = [l for l in lams if l > 0]
+    min_pos = min(pos_lams) if len(pos_lams) > 0 else 0.005
+    eff_zero = min_pos / 2.0
+    target = max(float(target_lam), 1e-6)
+
+    def log_dist(l: float) -> float:
+        eff_l = l if l > 0 else eff_zero
+        return abs(np.log(eff_l) - np.log(target))
+
+    best_idx = min(range(len(sf_df)), key=lambda i: log_dist(lams[i]))
+    return sf_df.iloc[best_idx]
+
+
+def render_tradeoff_tab(results_csv_path: Path, selected_delay: int, sidebar_lam: float) -> None:
+    """Render the Trade-off tab comparing policies across delays, recovery rates, and innocent harm."""
+    if not results_csv_path.exists():
+        st.warning("run python scripts/run_robust.py")
+        return
+
+    df = pd.read_csv(results_csv_path)
+    delay_df = df[df["delay"] == selected_delay].copy()
+    if delay_df.empty:
+        st.warning(f"No robust evaluation data for delay {selected_delay} min.")
+        return
+
+    # Controls
+    col_ctrl1, col_ctrl2 = st.columns([2, 1])
+    with col_ctrl1:
+        agg_mode = st.radio(
+            "Tracing rule aggregation",
+            options=["Average over tracing rules", "Worst case over tracing rules"],
+            index=0,
+            horizontal=True,
+        )
+    with col_ctrl2:
+        include_blanket = st.checkbox("include blanket freeze", value=False)
+
+    if agg_mode == "Average over tracing rules":
+        rec_col = "rec_rate_mean"
+        clean_col = "clean_blocked_mean"
+    else:
+        rec_col = "rec_rate_worst"
+        clean_col = "clean_blocked_worst"
+
+    sf_df = delay_df[delay_df["policy"].str.startswith("tarazu_")].copy()
+    if sf_df.empty:
+        st.warning("No smart freeze records found in results.")
+        return
+
+    sf_df["lam_val"] = sf_df["lam"].astype(float)
+    sf_df = sf_df.sort_values("lam_val")
+
+    # Nearest lambda point
+    nearest_row = find_nearest_lambda_row(sf_df, sidebar_lam)
+    nearest_lam = nearest_row["lam_val"]
+
+    # Baseline lien_only
+    lien_row = delay_df[delay_df["policy"] == "lien_only"]
+    lien_rec = lien_row.iloc[0][rec_col] if not lien_row.empty else 0.0
+    lien_clean = lien_row.iloc[0][clean_col] if not lien_row.empty else 0.0
+
+    sf_rec = nearest_row[rec_col]
+    sf_clean = nearest_row[clean_col]
+
+    # One-line summary above the chart
+    summary_msg = (
+        f"At this setting smart freeze recovers {sf_rec * 100:.1f}% vs {lien_rec * 100:.1f}% for lien-only, "
+        f"while blocking Rs {sf_clean:,.0f} of innocent money vs Rs {lien_clean:,.0f}."
+    )
+    st.markdown(f"**{summary_msg}**")
+
+    # Scatter plot
+    fig = go.Figure()
+
+    # Smart freeze points across evaluated lambdas joined by a line
+    sf_x = sf_df[clean_col] / 100000.0
+    sf_y = sf_df[rec_col] * 100.0
+    sf_hover = [
+        f"smart freeze (λ={r['lam']})<br>Recovery: {r[rec_col]*100:.1f}%<br>Innocent Blocked: Rs {r[clean_col]:,.0f} ({r[clean_col]/1e5:.2f}L)<br>Holds on Innocents: {int(r['innocent_holds'])}"
+        for _, r in sf_df.iterrows()
+    ]
+    fig.add_trace(go.Scatter(
+        x=sf_x,
+        y=sf_y,
+        mode="lines+markers",
+        name="smart freeze",
+        line=dict(color="#1f77b4", width=2),
+        marker=dict(size=8, color="#1f77b4"),
+        hoverinfo="text",
+        hovertext=sf_hover,
+    ))
+
+    # Single points
+    single_policies = ["lien_only", "lien_prop", "lien_fifo", "lien_libr", "lien_min"]
+    if include_blanket:
+        single_policies.append("blanket")
+
+    markers_cfg = {
+        "lien_only": dict(symbol="diamond", size=10, color="#2ca02c"),
+        "lien_prop": dict(symbol="triangle-up", size=10, color="#9467bd"),
+        "lien_fifo": dict(symbol="square", size=10, color="#8c564b"),
+        "lien_libr": dict(symbol="cross", size=10, color="#e377c2"),
+        "lien_min": dict(symbol="triangle-down", size=10, color="#7f7f7f"),
+        "blanket": dict(symbol="circle-open", size=12, line=dict(width=2, color="#d62728"), color="#d62728"),
+    }
+
+    for pol in single_policies:
+        p_row = delay_df[delay_df["policy"] == pol]
+        if not p_row.empty:
+            r = p_row.iloc[0]
+            px = r[clean_col] / 100000.0
+            py = r[rec_col] * 100.0
+            p_hover = f"{pol}<br>Recovery: {py:.1f}%<br>Innocent Blocked: Rs {r[clean_col]:,.0f} ({px:.2f}L)<br>Holds on Innocents: {int(r['innocent_holds'])}"
+            m_style = markers_cfg.get(pol, dict(size=10))
+            fig.add_trace(go.Scatter(
+                x=[px],
+                y=[py],
+                mode="markers",
+                name=pol,
+                marker=m_style,
+                hoverinfo="text",
+                hovertext=[p_hover],
+            ))
+
+    # Highlighted smart freeze point nearest to sidebar lambda
+    highlight_x = nearest_row[clean_col] / 100000.0
+    highlight_y = nearest_row[rec_col] * 100.0
+    highlight_hover = (
+        f"smart freeze (nearest λ={nearest_lam})<br>"
+        f"Recovery: {highlight_y:.1f}%<br>"
+        f"Innocent Blocked: Rs {nearest_row[clean_col]:,.0f} ({highlight_x:.2f}L)<br>"
+        f"Holds on Innocents: {int(nearest_row['innocent_holds'])}"
+    )
+    fig.add_trace(go.Scatter(
+        x=[highlight_x],
+        y=[highlight_y],
+        mode="markers",
+        name=f"smart freeze (λ={nearest_lam})",
+        marker=dict(size=15, color="#ff7f0e", symbol="star", line=dict(width=1.5, color="#333333")),
+        hoverinfo="text",
+        hovertext=[highlight_hover],
+    ))
+
+    fig.update_layout(
+        title=f"Recovery vs Innocent Harm (Delay = {selected_delay} min)",
+        xaxis_title="innocent money blocked in Rs lakh (clean_blocked/100000)",
+        yaxis_title="stolen money recovered %",
+        hovermode="closest",
+        legend=dict(x=1.02, y=1, orientation="v"),
+        margin=dict(l=40, r=40, t=40, b=40),
+        template="plotly_white",
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+    st.write(f"nearest evaluated lambda: {nearest_lam}")
+
+    # Table under chart: policy, recovery %, innocent money blocked (Rs), holds on innocents
+    table_rows = []
+
+    # 1. lien_only
+    if not lien_row.empty:
+        lr = lien_row.iloc[0]
+        table_rows.append({
+            "policy": "lien_only",
+            "recovery %": f"{lr[rec_col] * 100:.1f}%",
+            "innocent money blocked (Rs)": f"{lr[clean_col]:,.2f}",
+            "holds on innocents": int(lr["innocent_holds"]),
+        })
+
+    # 2. best single-rule lien
+    single_rules = delay_df[delay_df["policy"].isin(["lien_prop", "lien_fifo", "lien_libr", "lien_min"])]
+    if not single_rules.empty:
+        best_single = single_rules.loc[single_rules[rec_col].idxmax()]
+        table_rows.append({
+            "policy": f"best single-rule lien ({best_single['policy']})",
+            "recovery %": f"{best_single[rec_col] * 100:.1f}%",
+            "innocent money blocked (Rs)": f"{best_single[clean_col]:,.2f}",
+            "holds on innocents": int(best_single["innocent_holds"]),
+        })
+
+    # 3. smart freeze at highlighted lambda
+    table_rows.append({
+        "policy": f"smart freeze (λ={nearest_lam})",
+        "recovery %": f"{nearest_row[rec_col] * 100:.1f}%",
+        "innocent money blocked (Rs)": f"{nearest_row[clean_col]:,.2f}",
+        "holds on innocents": int(nearest_row["innocent_holds"]),
+    })
+
+    # 4. blanket
+    b_row = delay_df[delay_df["policy"] == "blanket"]
+    if not b_row.empty:
+        br = b_row.iloc[0]
+        table_rows.append({
+            "policy": "blanket",
+            "recovery %": f"{br[rec_col] * 100:.1f}%",
+            "innocent money blocked (Rs)": f"{br[clean_col]:,.2f}",
+            "holds on innocents": int(br["innocent_holds"]),
+        })
+
+    table_df = pd.DataFrame(table_rows)
+    st.dataframe(table_df, use_container_width=True, hide_index=True)
+
+    # Captions (exact text)
+    st.caption("Simulated data, 14 scams, one seed. Smart freeze zero harm is by construction: the sure part is safe under all three tracing rules.")
+    st.caption("Recovery assumes simulated exit timing; earlier decisions recover more.")
+
+
 # ==============================================================================
 # Main App Layout
 # ==============================================================================
 
-tab_case, = st.tabs(["Case View"])
+tab_case, tab_tradeoff = st.tabs(["Case view", "Trade-off"])
 
 with tab_case:
     st.subheader(f"Case View: Scam {selected_scam} (as_of = {as_of:.0f} min, delay = {selected_delay} min)")
@@ -650,3 +860,7 @@ with tab_case:
             file_name=f"decision_record_{aid}_{selected_scam}_{selected_delay}m.txt",
             mime="text/plain",
         )
+
+with tab_tradeoff:
+    render_tradeoff_tab(data_dir / "results_robust.csv", selected_delay, lam)
+
