@@ -41,12 +41,23 @@ def test_bystander_properties():
     """
     Every bystander has opening_balance above its true_tainted_received
     and at least 3 outgoing txns after receiving it.
-    At least 6 bystanders.
+    At least 24 bystanders, and every scam with start_time before day 25
+    has at least one bystander where an eligible normal account exists.
     """
     accs, txns, scam_truth, account_truth = build_all(seed=42)
 
     bystanders = account_truth[account_truth["role"] == "bystander"]
-    assert len(bystanders) >= 6
+    assert len(bystanders) >= 24
+
+    # Every scam with start_time before day 25 gets at least one bystander
+    eligible_scams = scam_truth[scam_truth["start_time"] < 25 * 1440]["scam_id"].tolist()
+    bystander_scams = set()
+    for s_str in bystanders["scam_ids"]:
+        for s in s_str.split(","):
+            if s:
+                bystander_scams.add(s)
+    for sid in eligible_scams:
+        assert sid in bystander_scams, f"Eligible scam {sid} has no bystander associated"
 
     acc_map = dict(zip(accs["account_id"], accs["opening_balance"]))
 
@@ -83,7 +94,7 @@ def test_bystander_properties():
 
 
 def test_lookalike_and_aggregator_roles():
-    """Exactly 4 look-alike roles present; one aggregator_tainted."""
+    """4 per look-alike role (16 total), is_mule 0, no scam_id on look-alike txns, one aggregator_tainted."""
     accs, txns, scam_truth, account_truth = build_all(seed=42)
 
     roles = account_truth["role"].value_counts()
@@ -92,11 +103,24 @@ def test_lookalike_and_aggregator_roles():
     assert "lookalike_new" in roles
     assert "lookalike_payout" in roles
 
-    # Exactly 4 look-alike accounts present (1 per role)
-    assert roles.get("lookalike_busy") == 1
-    assert roles.get("lookalike_festival") == 1
-    assert roles.get("lookalike_new") == 1
-    assert roles.get("lookalike_payout") == 1
+    # 4 per look-alike role (16 total)
+    assert roles.get("lookalike_busy") == 4
+    assert roles.get("lookalike_festival") == 4
+    assert roles.get("lookalike_new") == 4
+    assert roles.get("lookalike_payout") == 4
+
+    lookalike_roles = ["lookalike_busy", "lookalike_festival", "lookalike_new", "lookalike_payout"]
+    lookalike_ids = set(account_truth[account_truth["role"].isin(lookalike_roles)]["account_id"])
+    assert len(lookalike_ids) == 16
+
+    # Look-alikes must have is_mule == 0
+    merged = accs.merge(account_truth[["account_id", "role"]], on="account_id")
+    lookalike_accs = merged[merged["role"].isin(lookalike_roles)]
+    assert (lookalike_accs["is_mule"] == 0).all()
+
+    # No scam_id on look-alike transactions (neither as src nor dst should have a scam_id)
+    lookalike_txns = txns[txns["src"].isin(lookalike_ids) | txns["dst"].isin(lookalike_ids)]
+    assert (lookalike_txns["scam_id"] == "").all()
 
     # Exactly one aggregator_tainted
     assert roles.get("aggregator_tainted") == 1

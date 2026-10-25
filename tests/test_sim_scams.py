@@ -100,3 +100,18 @@ def test_no_negative_balance_replay():
         balances[dst] += amt
 
         assert balances[src] >= -1e-6
+
+
+def test_every_mule_in_scam_txn():
+    """Every account with is_mule = 1 appears as src or dst in at least one txn with a non-blank scam_id."""
+    accs, txns = generate_normal(seed=42)
+    accs2, txns2, truth2 = add_scams(accs, txns, n_scams=14, seed=42)
+
+    mule_ids = set(accs2[accs2["is_mule"] == 1]["account_id"])
+    assert len(mule_ids) == 16
+
+    scam_txns = txns2[txns2["scam_id"] != ""]
+    active_mules_in_scams = set(scam_txns["src"]).union(set(scam_txns["dst"])).intersection(mule_ids)
+
+    missing_mules = mule_ids - active_mules_in_scams
+    assert not missing_mules, f"Mules with is_mule = 1 not participating in any scam txn: {missing_mules}"

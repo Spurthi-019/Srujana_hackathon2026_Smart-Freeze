@@ -52,34 +52,28 @@ def add_innocents(
 
     new_txns = []
 
-    # a) Bystanders (about 8 across different scams)
-    # For a scam whose start_time is before day 25 (< 25 * 1440 = 36000)
+    # a) Bystanders (at least 24: every scam with start_time before day 25 gets at least one bystander, plus extras)
     eligible_scams = scam_truth2[scam_truth2["start_time"] < 25 * 1440].copy()
 
     bystander_records = {}
     used_bystanders = set()
 
-    for _, s_row in eligible_scams.iterrows():
-        sid = s_row["scam_id"]
-        s_exits = scam_exit_txns[scam_exit_txns["scam_id"] == sid]
-        if s_exits.empty:
-            continue
-
+    def try_add_bystander(sid, s_exits):
         mule_src = s_exits.iloc[-1]["src"]
         exit_time = int(s_exits.iloc[-1]["time"])
 
         mule_bal = live_balances.get(mule_src, 0.0)
         if mule_bal < 2000.0:
-            continue
+            return False
 
         max_possible = min(25000.0, mule_bal * 0.30)
         if max_possible < 2000.0:
-            continue
+            return False
         amt = round(float(rng.uniform(2000.0, max_possible)), 2)
 
         receipt_time = exit_time + int(rng.integers(5, 61))
         if receipt_time > 43200:
-            continue
+            return False
 
         chosen_bystander = None
         shuffled_cands = rng.permutation(normal_candidates)
@@ -115,6 +109,33 @@ def add_innocents(
                 bystander_records[chosen_bystander] = {"tainted": 0.0, "scams": []}
             bystander_records[chosen_bystander]["tainted"] += amt
             bystander_records[chosen_bystander]["scams"].append(sid)
+            return True
+        return False
+
+    # First pass: assign at least one bystander to each eligible scam (< day 25)
+    for _, s_row in eligible_scams.iterrows():
+        sid = s_row["scam_id"]
+        s_exits = scam_exit_txns[scam_exit_txns["scam_id"] == sid]
+        if s_exits.empty:
+            continue
+        try_add_bystander(sid, s_exits)
+
+    # Second pass: add extras across eligible scams until reaching at least 24 bystanders
+    extra_round = 0
+    while len(bystander_records) < 24 and extra_round < 10:
+        added_in_round = False
+        for _, s_row in eligible_scams.iterrows():
+            if len(bystander_records) >= 24:
+                break
+            sid = s_row["scam_id"]
+            s_exits = scam_exit_txns[scam_exit_txns["scam_id"] == sid]
+            if s_exits.empty:
+                continue
+            if try_add_bystander(sid, s_exits):
+                added_in_round = True
+        if not added_in_round:
+            break
+        extra_round += 1
 
     # b) HARD CASE: one aggregator receives tainted payment from 2 different scams
     aggregator_ids = accounts2[accounts2["type"] == "aggregator"]["account_id"].tolist()
@@ -149,178 +170,229 @@ def add_innocents(
                 scam_truth2.at[idx, "to_bystanders"] = round(scam_truth2.at[idx, "to_bystanders"] + amt, 2)
                 agg_scams_added += 1
 
-    # c) LOOK-ALIKES (4 roles):
-    # 1. lookalike_busy:
+    # c) LOOK-ALIKES (4 roles, 4 accounts each, 16 total):
+    # Customer pool and general merchant pools for lookalike interactions
+    customer_pool = accounts2[accounts2["type"].isin(["salaried", "gig"])]["account_id"].tolist()
+    merchant_pool = accounts2[accounts2["type"] == "merchant"]["account_id"].tolist()
+
+    # 1. lookalike_busy (4 accounts: ACC_BUSY_01 to ACC_BUSY_04)
     # age_days 150-400, opening_balance <= 1000, avg_monthly_inflow ~30% of real monthly volume,
     # forwards 85-95% of each batch to suppliers within 20-40 minutes, active on >= 20 days.
-    regular_merchants = accounts2[(accounts2["type"] == "merchant") & (~accounts2["account_id"].isin(used_bystanders))]["account_id"].tolist()
-    busy_merchant = regular_merchants[0]
-    # Update busy_merchant attributes in accounts2
-    idx_busy = accounts2.index[accounts2["account_id"] == busy_merchant].tolist()[0]
-    accounts2.at[idx_busy, "age_days"] = int(rng.integers(150, 401))
-    accounts2.at[idx_busy, "opening_balance"] = float(rng.uniform(200, 1000))
-    # We will adjust avg_monthly_inflow below based on real volume
+    busy_ids = [f"ACC_BUSY_{i:02d}" for i in range(1, 5)]
+    busy_acc_rows = []
+    for bid in busy_ids:
+        b_age = int(rng.integers(150, 401))
+        b_op = round(float(rng.uniform(200.0, 1000.0)), 2)
+        busy_acc_rows.append({
+            "account_id": bid,
+            "type": "merchant",
+            "age_days": b_age,
+            "avg_monthly_inflow": 0.0,  # updated after txns
+            "opening_balance": b_op,
+            "is_mule": 0,
+        })
+        live_balances[bid] = b_op
 
-    customer_pool = accounts2[accounts2["type"].isin(["salaried", "gig"])]["account_id"].tolist()
-    supplier_pool = [m for m in regular_merchants if m != busy_merchant]
+    accounts2 = pd.concat([accounts2, pd.DataFrame(busy_acc_rows)], ignore_index=True)
 
-    # Generate ~150 small inflows across at least 20 distinct days
-    busy_days = rng.choice(np.arange(0, 30), size=24, replace=False)
-    inflow_times = []
-    for d in busy_days:
-        n_in_day = int(rng.integers(5, 8))
-        d_times = d * 1440 + rng.integers(60, 1380, size=n_in_day)
-        inflow_times.extend(d_times)
-    inflow_times = np.sort(np.array(inflow_times))
+    for bid in busy_ids:
+        idx_b = accounts2.index[accounts2["account_id"] == bid].tolist()[0]
+        n_days = int(rng.integers(20, 26))
+        busy_days = rng.choice(np.arange(0, 30), size=n_days, replace=False)
+        inflow_times = []
+        for d in busy_days:
+            n_in_day = int(rng.integers(4, 8))
+            d_times = d * 1440 + rng.integers(60, 1380, size=n_in_day)
+            inflow_times.extend(d_times)
+        inflow_times = np.sort(np.array(inflow_times))
 
-    busy_total_inflow = 0.0
-    for t_in in inflow_times:
-        amt_in = round(float(rng.uniform(300.0, 1800.0)), 2)
-        sender = rng.choice(customer_pool)
-        if live_balances[sender] >= amt_in:
-            live_balances[sender] -= amt_in
-            live_balances[busy_merchant] += amt_in
-            busy_total_inflow += amt_in
-            new_txns.append({
-                "time": int(t_in),
-                "src": sender,
-                "dst": busy_merchant,
-                "amount": amt_in,
-                "scam_id": "",
-            })
-            # Forward 85-95% within 20-40 minutes
-            fwd_pct = float(rng.uniform(0.85, 0.95))
-            fwd_amt = round(amt_in * fwd_pct, 2)
-            t_fwd = min(43200, int(t_in + rng.integers(20, 41)))
-            supplier = rng.choice(supplier_pool)
-            if live_balances[busy_merchant] >= fwd_amt:
-                live_balances[busy_merchant] -= fwd_amt
-                live_balances[supplier] += fwd_amt
+        b_total_inflow = 0.0
+        for t_in in inflow_times:
+            amt_in = round(float(rng.uniform(300.0, 1800.0)), 2)
+            sender = rng.choice(customer_pool)
+            if live_balances[sender] >= amt_in:
+                live_balances[sender] -= amt_in
+                live_balances[bid] += amt_in
+                b_total_inflow += amt_in
                 new_txns.append({
-                    "time": t_fwd,
-                    "src": busy_merchant,
-                    "dst": supplier,
-                    "amount": fwd_amt,
+                    "time": int(t_in),
+                    "src": sender,
+                    "dst": bid,
+                    "amount": amt_in,
+                    "scam_id": "",
+                })
+                # Forward 85-95% within 20-40 minutes
+                fwd_pct = float(rng.uniform(0.85, 0.95))
+                fwd_amt = round(amt_in * fwd_pct, 2)
+                t_fwd = min(43200, int(t_in + rng.integers(20, 41)))
+                supplier = rng.choice(merchant_pool)
+                if live_balances[bid] >= fwd_amt:
+                    live_balances[bid] -= fwd_amt
+                    live_balances[supplier] += fwd_amt
+                    new_txns.append({
+                        "time": t_fwd,
+                        "src": bid,
+                        "dst": supplier,
+                        "amount": fwd_amt,
+                        "scam_id": "",
+                    })
+
+        accounts2.at[idx_b, "avg_monthly_inflow"] = round(b_total_inflow * float(rng.uniform(0.28, 0.35)), 2)
+
+    # 2. lookalike_festival (4 accounts: ACC_FEST_01 to ACC_FEST_04)
+    # 10x inflow during days 19-21, also forwards ~70% within an hour during days 19-21.
+    fest_ids = [f"ACC_FEST_{i:02d}" for i in range(1, 5)]
+    fest_acc_rows = []
+    for fid in fest_ids:
+        f_age = int(rng.integers(200, 1000))
+        f_op = round(float(rng.uniform(15000.0, 40000.0)), 2)
+        fest_acc_rows.append({
+            "account_id": fid,
+            "type": "merchant",
+            "age_days": f_age,
+            "avg_monthly_inflow": round(float(rng.uniform(40000.0, 80000.0)), 2),
+            "opening_balance": f_op,
+            "is_mule": 0,
+        })
+        live_balances[fid] = f_op
+
+    accounts2 = pd.concat([accounts2, pd.DataFrame(fest_acc_rows)], ignore_index=True)
+
+    for fid in fest_ids:
+        n_fest_tx = int(rng.integers(60, 95))
+        fest_times = np.sort(rng.integers(27360, 31680, size=n_fest_tx))
+        for t_f in fest_times:
+            amt_f = round(float(rng.uniform(800.0, 4500.0)), 2)
+            sender = rng.choice(customer_pool)
+            if live_balances[sender] >= amt_f:
+                live_balances[sender] -= amt_f
+                live_balances[fid] += amt_f
+                new_txns.append({
+                    "time": int(t_f),
+                    "src": sender,
+                    "dst": fid,
+                    "amount": amt_f,
+                    "scam_id": "",
+                })
+                # Forwards ~70% (65-75%) within an hour (10-55 mins)
+                fwd_pct = float(rng.uniform(0.67, 0.73))
+                fwd_fest = round(amt_f * fwd_pct, 2)
+                t_fwd_f = min(43200, int(t_f + rng.integers(10, 55)))
+                supplier = rng.choice(merchant_pool)
+                if live_balances[fid] >= fwd_fest:
+                    live_balances[fid] -= fwd_fest
+                    live_balances[supplier] += fwd_fest
+                    new_txns.append({
+                        "time": t_fwd_f,
+                        "src": fid,
+                        "dst": supplier,
+                        "amount": fwd_fest,
+                        "scam_id": "",
+                    })
+
+    # 3. lookalike_new (4 accounts: ACC_NEW_01 to ACC_NEW_04)
+    # age_days 15-25 (jittered around 20) with regular activity
+    new_ids = [f"ACC_NEW_{i:02d}" for i in range(1, 5)]
+    new_acc_rows = []
+    for nid in new_ids:
+        n_age = int(rng.integers(15, 26))
+        n_inflow = round(float(rng.uniform(35000.0, 60000.0)), 2)
+        n_op = round(float(rng.uniform(25000.0, 45000.0)), 2)
+        new_acc_rows.append({
+            "account_id": nid,
+            "type": "salaried",
+            "age_days": n_age,
+            "avg_monthly_inflow": n_inflow,
+            "opening_balance": n_op,
+            "is_mule": 0,
+        })
+        live_balances[nid] = n_op
+
+    accounts2 = pd.concat([accounts2, pd.DataFrame(new_acc_rows)], ignore_index=True)
+
+    for nid in new_ids:
+        n_spends = int(rng.integers(16, 26))
+        new_tx_times = np.sort(rng.integers(500, 43000, size=n_spends))
+        for t_n in new_tx_times:
+            amt_spend = round(float(rng.uniform(150.0, 1500.0)), 2)
+            dst_m = rng.choice(merchant_pool)
+            if live_balances[nid] >= amt_spend:
+                live_balances[nid] -= amt_spend
+                live_balances[dst_m] += amt_spend
+                new_txns.append({
+                    "time": int(t_n),
+                    "src": nid,
+                    "dst": dst_m,
+                    "amount": amt_spend,
                     "scam_id": "",
                 })
 
-    accounts2.at[idx_busy, "avg_monthly_inflow"] = round(busy_total_inflow * 0.30, 2)
-
-    # 2. lookalike_festival:
-    # 10x inflow during days 19-21, also forwards ~70% within an hour during days 19-21
-    fest_cand = [m for m in regular_merchants[1:] if m not in used_bystanders][0]
-    fest_times = np.sort(rng.integers(27360, 31680, size=80))
-    for t_f in fest_times:
-        amt_f = round(float(rng.uniform(1000.0, 5000.0)), 2)
-        sender = rng.choice(customer_pool)
-        if live_balances[sender] >= amt_f:
-            live_balances[sender] -= amt_f
-            live_balances[fest_cand] += amt_f
-            new_txns.append({
-                "time": int(t_f),
-                "src": sender,
-                "dst": fest_cand,
-                "amount": amt_f,
-                "scam_id": "",
-            })
-            # Forwards ~70% within an hour
-            fwd_fest = round(amt_f * float(rng.uniform(0.68, 0.72)), 2)
-            t_fwd_f = min(43200, int(t_f + rng.integers(10, 55)))
-            supplier = rng.choice(supplier_pool)
-            if live_balances[fest_cand] >= fwd_fest:
-                live_balances[fest_cand] -= fwd_fest
-                live_balances[supplier] += fwd_fest
-                new_txns.append({
-                    "time": t_fwd_f,
-                    "src": fest_cand,
-                    "dst": supplier,
-                    "amount": fwd_fest,
-                    "scam_id": "",
-                })
-
-    # 3. lookalike_new: age_days 20 with regular activity
-    new_acc_id = "ACC_NEW_001"
-    new_acc_row = {
-        "account_id": new_acc_id,
-        "type": "salaried",
-        "age_days": 20,
-        "avg_monthly_inflow": 45000.0,
-        "opening_balance": 35000.0,
-        "is_mule": 0,
-    }
-    accounts2 = pd.concat([accounts2, pd.DataFrame([new_acc_row])], ignore_index=True)
-    live_balances[new_acc_id] = new_acc_row["opening_balance"]
-
-    new_tx_times = np.sort(rng.integers(500, 43000, size=20))
-    for t_n in new_tx_times:
-        amt_spend = round(float(rng.uniform(200.0, 1200.0)), 2)
-        dst_m = rng.choice(supplier_pool)
-        if live_balances[new_acc_id] >= amt_spend:
-            live_balances[new_acc_id] -= amt_spend
-            live_balances[dst_m] += amt_spend
-            new_txns.append({
-                "time": int(t_n),
-                "src": new_acc_id,
-                "dst": dst_m,
-                "amount": amt_spend,
-                "scam_id": "",
-            })
-
-    # 4. NEW lookalike_payout (type gig or aggregator):
+    # 4. lookalike_payout (4 accounts: ACC_PAYOUT_01 to ACC_PAYOUT_04)
     # receives a large batch from an employer-like account twice in the month and forwards it
     # to about 20 different gig accounts within 30-60 minutes, is_mule 0, no scam_id, age_days 200-600
-    payout_acc_id = "ACC_PAYOUT_001"
-    payout_acc_row = {
-        "account_id": payout_acc_id,
-        "type": "aggregator",
-        "age_days": int(rng.integers(200, 601)),
-        "avg_monthly_inflow": 500000.0,
-        "opening_balance": 20000.0,
-        "is_mule": 0,
-    }
-    accounts2 = pd.concat([accounts2, pd.DataFrame([payout_acc_row])], ignore_index=True)
-    live_balances[payout_acc_id] = payout_acc_row["opening_balance"]
+    payout_ids = [f"ACC_PAYOUT_{i:02d}" for i in range(1, 5)]
+    payout_acc_rows = []
+    for pid in payout_ids:
+        p_age = int(rng.integers(200, 601))
+        p_inflow = round(float(rng.uniform(400000.0, 650000.0)), 2)
+        p_op = round(float(rng.uniform(15000.0, 35000.0)), 2)
+        payout_acc_rows.append({
+            "account_id": pid,
+            "type": "aggregator",
+            "age_days": p_age,
+            "avg_monthly_inflow": p_inflow,
+            "opening_balance": p_op,
+            "is_mule": 0,
+        })
+        live_balances[pid] = p_op
+
+    accounts2 = pd.concat([accounts2, pd.DataFrame(payout_acc_rows)], ignore_index=True)
 
     employer_ids = accounts2[(accounts2["type"] == "merchant") & (accounts2["opening_balance"] > 1000000)]["account_id"].tolist()
     if not employer_ids:
         employer_ids = accounts2[accounts2["type"] == "merchant"]["account_id"].tolist()[:3]
     gig_accounts = accounts2[accounts2["type"] == "gig"]["account_id"].tolist()
 
-    # Twice in the month: e.g. day 5 (minute 7200) and day 20 (minute 28800)
-    for batch_t in [7200, 28800]:
-        emp = rng.choice(employer_ids)
-        batch_amt = round(float(rng.uniform(150000, 250000)), 2)
-        if live_balances[emp] >= batch_amt:
-            live_balances[emp] -= batch_amt
-            live_balances[payout_acc_id] += batch_amt
-            new_txns.append({
-                "time": batch_t,
-                "src": emp,
-                "dst": payout_acc_id,
-                "amount": batch_amt,
-                "scam_id": "",
-            })
+    for pid in payout_ids:
+        # Twice in the month: jitter day 4-6 and day 19-21
+        t_batch1 = int(rng.integers(4 * 1440, 7 * 1440))
+        t_batch2 = int(rng.integers(19 * 1440, 22 * 1440))
+        for batch_t in [t_batch1, t_batch2]:
+            emp = rng.choice(employer_ids)
+            batch_amt = round(float(rng.uniform(150000.0, 260000.0)), 2)
+            if live_balances[emp] >= batch_amt:
+                live_balances[emp] -= batch_amt
+                live_balances[pid] += batch_amt
+                new_txns.append({
+                    "time": batch_t,
+                    "src": emp,
+                    "dst": pid,
+                    "amount": batch_amt,
+                    "scam_id": "",
+                })
 
-            # Forwards to about 20 different gig accounts within 30-60 minutes
-            n_targets = min(20, len(gig_accounts))
-            target_gigs = rng.choice(gig_accounts, size=n_targets, replace=False)
-            weights = rng.dirichlet(np.ones(n_targets))
-            payout_amts = [round(batch_amt * 0.98 * w, 2) for w in weights]
-            payout_amts[0] += round(batch_amt * 0.98 - sum(payout_amts), 2)
+                # Jitter number of payees between 15 and 25
+                n_targets = min(int(rng.integers(15, 26)), len(gig_accounts))
+                target_gigs = rng.choice(gig_accounts, size=n_targets, replace=False)
+                fwd_share = float(rng.uniform(0.96, 0.99))
+                fwd_total = batch_amt * fwd_share
+                weights = rng.dirichlet(np.ones(n_targets))
+                payout_amts = [round(fwd_total * w, 2) for w in weights]
+                payout_amts[0] += round(fwd_total - sum(payout_amts), 2)
 
-            for g_target, g_amt in zip(target_gigs, payout_amts):
-                delay = int(rng.integers(30, 61))
-                t_out = min(43200, batch_t + delay)
-                if live_balances[payout_acc_id] >= g_amt:
-                    live_balances[payout_acc_id] -= g_amt
-                    live_balances[g_target] += g_amt
-                    new_txns.append({
-                        "time": t_out,
-                        "src": payout_acc_id,
-                        "dst": g_target,
-                        "amount": g_amt,
-                        "scam_id": "",
-                    })
+                for g_target, g_amt in zip(target_gigs, payout_amts):
+                    delay = int(rng.integers(30, 61))
+                    t_out = min(43200, batch_t + delay)
+                    if live_balances[pid] >= g_amt:
+                        live_balances[pid] -= g_amt
+                        live_balances[g_target] += g_amt
+                        new_txns.append({
+                            "time": t_out,
+                            "src": pid,
+                            "dst": g_target,
+                            "amount": g_amt,
+                            "scam_id": "",
+                        })
 
     # d) Replay check to ensure no negative balances anywhere
     all_combined = pd.concat([txns2, pd.DataFrame(new_txns)], ignore_index=True)
@@ -408,19 +480,19 @@ def add_innocents(
             role = "bystander"
             tainted = round(actual_bystander_tainted[aid], 2)
             scams_str = ",".join(sorted(actual_bystander_scams[aid]))
-        elif aid == busy_merchant:
+        elif aid in busy_ids:
             role = "lookalike_busy"
             tainted = 0.0
             scams_str = ""
-        elif aid == fest_cand:
+        elif aid in fest_ids:
             role = "lookalike_festival"
             tainted = 0.0
             scams_str = ""
-        elif aid == new_acc_id:
+        elif aid in new_ids:
             role = "lookalike_new"
             tainted = 0.0
             scams_str = ""
-        elif aid == payout_acc_id:
+        elif aid in payout_ids:
             role = "lookalike_payout"
             tainted = 0.0
             scams_str = ""

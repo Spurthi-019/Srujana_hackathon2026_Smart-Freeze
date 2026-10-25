@@ -61,13 +61,22 @@ def add_scams(
     # Track inflows per mule across scams to calculate avg_monthly_inflow appropriately
     mule_scam_inflows = {m: [] for m in mule_pool_ids}
 
+    # Pre-assign each pool mule to scams round-robin so every mule takes part in at least one scam
+    scam_assigned_mules = [[] for _ in range(n_scams)]
+    for m_idx, m_id in enumerate(mule_pool_ids):
+        scam_assigned_mules[m_idx % n_scams].append(m_id)
+
     for i in range(n_scams):
         scam_id = f"S{i+1:02d}"
         shape = assigned_shapes[i]
         start_time = int(raw_start_times[i])
 
         n_mules = int(rng.choice([3, 4, 5]))
-        selected_mules = list(rng.choice(mule_pool_ids, size=n_mules, replace=False))
+        selected_mules = list(scam_assigned_mules[i])
+        available_pool = [m for m in mule_pool_ids if m not in selected_mules]
+        needed = n_mules - len(selected_mules)
+        if needed > 0:
+            selected_mules.extend(list(rng.choice(available_pool, size=needed, replace=False)))
 
         scam_victim_ids = []
         this_scam_txns = []
